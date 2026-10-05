@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Assist</title>
+<link rel="stylesheet" href="/v2/app.css">
+</head>
+<body>
+<div id="offline" class="offline" hidden>Not connected to the player &mdash; retrying&hellip;</div>
+
+<header class="timers">
+  <div class="timer timer-track">
+    <div id="track-label" class="label">Track left</div>
+    <div id="remaining" class="mono timer-value">-:--</div>
+  </div>
+  <div class="timer">
+    <div class="label">Show left</div>
+    <div id="show-left" class="mono timer-value">--:--</div>
+  </div>
+  <div class="timer">
+    <div class="label">Time</div>
+    <div class="mono timer-value"><span id="clock">--:--:--</span><span id="clock-ampm" class="ampm"></span></div>
+  </div>
+</header>
+
+<div class="showbar">
+  <span class="label">On air</span>
+  <h1 id="show-name">&nbsp;</h1>
+  <span class="muted">ends <b id="show-end" class="mono">--:--</b></span>
+  <span id="next-show" class="muted next" hidden>Next: <b id="next-name"></b> &middot; <span id="next-time" class="mono"></span></span>
+  <a class="classic" href="/">Classic view</a>
+</div>
+
+<main class="layout">
+  <section class="list">
+    <div class="list-head">
+      <div>
+        <h2>Playlist</h2>
+        <span id="list-summary" class="muted"></span>
+      </div>
+      <button id="btn-break" class="btn-break" type="button" disabled>Breakpoint</button>
+    </div>
+    <ol id="playlist" class="playlist"></ol>
+  </section>
+
+  <section id="side" class="side">
+    <div class="side-head">
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab" role="tab" data-tab="carts" aria-selected="true">Carts</button>
+        <button type="button" class="tab" role="tab" data-tab="facts" aria-selected="false">Song facts</button>
+      </div>
+      <button type="button" id="side-toggle" class="side-toggle" title="Collapse panel" aria-expanded="true">
+        <span class="side-label">Carts &middot; Song facts</span><span class="chev" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div id="pane-carts" class="pane" role="tabpanel">
+      <div id="groups" class="groups"></div>
+      <p id="no-carts" class="muted empty" hidden>No carts for this show.</p>
+    </div>
+    <div id="pane-facts" class="pane" role="tabpanel" hidden>
+      <div id="facts" class="facts"><p class="muted empty">Waiting for the player&hellip;</p></div>
+    </div>
+  </section>
+</main>
+
+<footer class="deck">
+  <div class="transport">
+    <button id="btn-prev" class="btn" title="Previous track" aria-label="Previous track">&#9198;</button>
+    <button id="btn-play" class="btn btn-main" title="Play / Pause" aria-label="Play or pause">&#9654;</button>
+    <button id="btn-next" class="btn" title="Next track" aria-label="Next track">&#9197;</button>
+  </div>
+
+  <div class="now">
+    <div class="now-head">
+      <span id="status" class="pill" data-status="unknown">&hellip;</span>
+      <span id="mode" class="muted"></span>
+      <span id="seek-confirm" class="seek-confirm" hidden>
+        <button id="seek-go" type="button" class="seek-go">Seek</button>
+        <button id="seek-cancel" type="button" class="seek-cancel">Cancel</button>
+      </span>
+    </div>
+    <div class="now-line">
+      <span id="now-title" class="now-title">&nbsp;</span>
+      <span id="now-artist" class="now-artist">&nbsp;</span>
+    </div>
+    <div class="progress-row mono">
+      <span id="elapsed">0:00</span>
+      <div id="seekbar" class="seekbar"><div class="progress"><div id="progress-bar" class="progress-bar"></div><div id="seek-mark" class="seek-mark" hidden></div></div></div>
+      <span id="duration">0:00</span>
+    </div>
+  </div>
+
+  <div class="meters" aria-label="Output level">
+    <div class="meter"><div id="meter" class="meter-fill"></div><div id="peak" class="meter-peak"></div></div>
+    <span id="db" class="mono db">-&infin;</span>
+  </div>
+</footer>
+
+<script src="/v2/app.js"></script>
+</body>
+</html>

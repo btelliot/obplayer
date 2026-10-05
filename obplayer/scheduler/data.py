@@ -655,6 +655,24 @@ class ObRemoteData(obplayer.ObData):
 
         return None
 
+    # name/type/times of the next show to start after present_timestamp (live assist "Next:" display)
+    def get_next_show(self, present_timestamp):
+        rows = self.query(
+            "SELECT datetime,duration,name,type from shows where datetime > "
+            + str(present_timestamp)
+            + " order by datetime limit 1"
+        )
+
+        for row in rows:
+            return {
+                "name": row["name"],
+                "type": row["type"],
+                "start_time": row["datetime"],
+                "end_time": row["datetime"] + float(row["duration"]),
+            }
+
+        return None
+
     def load_groups(self, local_show_id):
 
         group_rows = self.query(

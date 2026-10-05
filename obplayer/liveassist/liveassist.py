@@ -85,6 +85,22 @@ class ObLiveAssist(httpserver.ObHTTPServer):
             playlist = obplayer.Scheduler.get_current_playlist()
             return playlist
 
+        elif request.path == "/info/next_show":
+            try:
+                show = obplayer.RemoteData.get_next_show(time.time())
+            except Exception as e:
+                # e.g. schedule db busy mid-sync; the page just retries later
+                obplayer.Log.log("next_show lookup failed: " + str(e), "error")
+                show = None
+            if show is None:
+                return {"name": ""}
+            return {
+                "name": show["name"],
+                "type": show["type"],
+                "start_time": str(show["start_time"]),
+                "end_time": str(show["end_time"]),
+            }
+
         elif request.path == "/info/liveassist_groups":
             groups = obplayer.Scheduler.get_current_groups()
             return groups
@@ -139,6 +155,13 @@ class ObLiveAssist(httpserver.ObHTTPServer):
                 return {"status": True}
             else:
                 return {"status": False}
+
+        elif request.path == "/command/stop_after_current":
+            # enable=1 arms "stop after this track", enable=0 cancels it (live assist shows only)
+            enable = request.args.get("enable", ["1"])[0] != "0"
+            if obplayer.Scheduler.set_stop_after(enable):
+                return {"status": True}
+            return {"status": False}
 
         elif request.path == "/command/station_count":
             mount = obplayer.Config.setting("station_override_server_mountpoint")

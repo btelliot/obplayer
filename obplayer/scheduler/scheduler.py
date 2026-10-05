@@ -149,6 +149,7 @@ class ObShow(object):
         self.paused = False
         self.pause_position = 0
         self.auto_advance = True
+        self.stop_after = False  # live assist: hold in a break when the current track ends
 
         self.media_start_time = 0
         self.now_playing = None
@@ -529,6 +530,32 @@ class ObLiveAssistShow(ObShow):
         if self.ctrl.has_requests():
             return False
 
+        # "stop after this track": step past the finished track and hold like a playlist
+        # breakpoint does, so Play (unpause) starts the next track rather than replaying this one.
+        if self.stop_after:
+            self.stop_after = False
+            obplayer.Log.log(
+                "stopping after track at position " + str(self.playlist.pos),
+                "scheduler",
+            )
+            self.playlist.increment()
+            self.auto_advance = False
+            self.media_start_time = 0
+            obplayer.Sync.now_playing_update(
+                self.show_data["show_id"],
+                self.show_data["end_time"],
+                "",
+                "",
+                self.show_data["name"],
+            )
+            self.ctrl.stop_requests()
+            self.ctrl.add_request(
+                media_type="break",
+                end_time=self.end_time(),
+                title="live assist breakpoint",
+            )
+            return False
+
         # increment before checking if finished (otherwise finished is never detected)
         self.playlist.increment()
         if self.playlist.is_finished():
@@ -834,6 +861,14 @@ class ObScheduler:
             self.present_show.play_group_item(group_num, group_item_num, seek)
         return True
 
+    def set_stop_after(self, enable):
+        if not isinstance(self.present_show, ObLiveAssistShow):
+            return False
+
+        with self.lock:
+            self.present_show.stop_after = bool(enable)
+        return True
+
     def unpause_show(self):
         if self.present_show == None:
             return False
@@ -920,6 +955,10 @@ class ObScheduler:
             else:
                 data["mode"] = "playlist"
                 data["track"] = self.present_show.playlist.current_pos()
+
+        if self.present_show != None:
+            data["show_type"] = self.present_show.show_data["type"]
+            data["stop_after"] = self.present_show.stop_after
 
         return data
 
