@@ -22,7 +22,7 @@ from .base import ObGstPipeline
 from .breakbin import ObBreakPipeline
 from .decodebin import ObPlayBinPipeline, ObAudioPlayBinPipeline
 from .decks import ObAudioDeckPipeline
-from .audio import ObAlertPipeline, ObVoicetrackPipeline
+from .audio import ObAlertPipeline, ObVoicetrackPipeline, ObCartPlayer
 from .image import ObImagePipeline
 from .linein import ObLineInPipeline
 from .rtp import ObRTPInputPipeline

@@ -87,6 +87,7 @@ class ObAudioMixerBin(ObOutputBin):
         pipeline_str = """
             interpipesrc stream-sync=restart-ts is-live=true listen-to=interpipe-none format=time name=interpipesrc-main ! queue ! volume volume=1.0 name="channel-main-volume" ! audioconvert ! audioresample ! mixer-primary.
             interpipesrc stream-sync=restart-ts is-live=true listen-to=interpipe-none format=time name=interpipesrc-voicetrack ! queue ! volume volume=1.0 name="channel-voicetrack-volume" ! audioconvert ! audioresample ! mixer-primary.
+            interpipesrc stream-sync=restart-ts is-live=true listen-to=interpipe-none format=time accept-eos-event=false name=interpipesrc-cart ! queue ! volume volume=1.0 name="channel-cart-volume" ! audioconvert ! audioresample ! mixer-primary.
             interpipesrc stream-sync=restart-ts is-live=true listen-to=interpipe-none format=time name=interpipesrc-alert ! queue ! audioconvert ! audioresample ! mixer-alert.
             audiomixer name=mixer-primary ! volume volume=1.0 name=mixer-primary-volume ! volume volume=1.0 name=mixer-prealert-volume ! audioconvert ! audioresample ! audiomixer name=mixer-alert ! queue ! interpipesink name=interpipe-output sync=true
         """
@@ -149,6 +150,21 @@ class ObAudioMixerBin(ObOutputBin):
 
     def voicetrack_off(self):
         self.pipeline_main.get_by_name("interpipesrc-voicetrack").set_property(
+            "listen-to", "interpipe-none"
+        )
+        self.pipeline_main.get_state(Gst.CLOCK_TIME_NONE)
+
+    # live assist carts (sound effects), mixed over whatever is on air. The cart input ignores the
+    # cart's end of stream (accept-eos-event=false), which would otherwise end the mixer's cart
+    # branch for good and silence every cart after the first.
+    def cart_on(self, interpipe_name):
+        self.pipeline_main.get_by_name("interpipesrc-cart").set_property(
+            "listen-to", interpipe_name
+        )
+        self.pipeline_main.get_state(Gst.CLOCK_TIME_NONE)
+
+    def cart_off(self):
+        self.pipeline_main.get_by_name("interpipesrc-cart").set_property(
             "listen-to", "interpipe-none"
         )
         self.pipeline_main.get_state(Gst.CLOCK_TIME_NONE)

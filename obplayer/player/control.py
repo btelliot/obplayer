@@ -97,6 +97,9 @@ class ObPlayer(object):
         self.pipes["rtsp"] = pipes.ObRTSPInputPipeline("rtsp-input", self)
         self.pipes["sdp"] = pipes.ObSDPInputPipeline("sdp-input", self)
 
+        # live assist carts play over everything on their own mixer channel, outside the requests
+        self.carts = pipes.ObCartPlayer(self)
+
         def silence_request(self, present_time, media_class):
             obplayer.Log.log(
                 "player has no requests to play; outputting silence", "player"
@@ -113,6 +116,7 @@ class ObPlayer(object):
         self.thread.start()
 
     def player_quit(self):
+        self.carts.stop()
         for pipe_name in self.pipes.keys():
             self.pipes[pipe_name].quit()
 
@@ -494,6 +498,9 @@ class ObPlayer(object):
             self.set_request_transition(req, enabled)
 
     def set_request_transition(self, req, enabled):
+        # the end of the show cuts this track either way; keep its fade-out
+        if req.get("show_end_fade"):
+            return
         if not enabled:
             if "saved_transition" not in req:
                 req["saved_transition"] = (req["fade_out"], req["overlap"])
@@ -742,6 +749,7 @@ class ObPlayerController(object):
         fade_out=0,
         overlap=0,
         fade_in_resume=False,
+        show_end_fade=False,
     ):
         if not self.enabled:
             return
@@ -790,6 +798,8 @@ class ObPlayerController(object):
             "overlap": overlap,
             # resuming from pause: fade in from silence when the deck starts, with no outgoing deck
             "fade_in_resume": fade_in_resume,
+            # fade_out is the end-of-show fade (live assist), not a crossfade into the next track
+            "show_end_fade": show_end_fade,
         }
 
         self.insert_request(req)

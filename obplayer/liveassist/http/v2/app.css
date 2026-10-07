@@ -199,7 +199,17 @@ a { color: var(--accent); }
 .cart {
   text-align: left; border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
   border-radius: 8px; padding: 8px 10px; cursor: pointer; font: inherit; font-size: 17px; min-height: 70px;
+  position: relative; overflow: hidden;
 }
+/* a fired cart fills left to right over its own length, as a timer for the sound effect */
+.cart > span { position: relative; }
+.cart::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: color-mix(in srgb, var(--play) 38%, transparent);
+  transform: scaleX(0); transform-origin: left;
+}
+.cart.sweeping::before { animation: cart-sweep var(--sweep-time, 1s) linear var(--sweep-delay, 0s) forwards; }
+@keyframes cart-sweep { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .cart:hover { border-color: var(--accent); }
 .cart.playing { border-color: var(--play); box-shadow: inset 0 0 0 1px var(--play); }
 .cart .dur { display: block; color: var(--muted); font-size: 15px; margin-top: 4px; }

@@ -9,6 +9,8 @@ LiveAssist Tab
   live_assist_port_invalid: Live Assist and HTTP Admin cannot use the same port.
 
   live_assist_mic_enable: Enable Live Assist Microphone
+  live_assist_system_requests: Show System Requests Carts
+  live_assist_system_requests_tooltip: Show the "System Requests" cart group (switch to station line-in or remote RTP audio) on live assist shows.
 
   Microphone Output Settings: Microphone Output Settings
 

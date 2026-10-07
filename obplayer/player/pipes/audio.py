@@ -23,6 +23,7 @@ along with OpenBroadcaster Player.  If not, see <http://www.gnu.org/licenses/>.
 import obplayer
 
 import os
+import threading
 import traceback
 
 import gi
@@ -94,3 +95,69 @@ class ObVoicetrackPipeline(ObAudioPipeline):
 
     def mixer_off(self):
         self.player.outputs["mixer"].voicetrack_off()
+
+
+# Live assist carts: sound effects fired over whatever is on air, into their own mixer channel.
+# Not a request pipe, so a cart never stops, holds or changes the playing track (or a pause).
+# One cart at a time: firing another replaces the one still playing.
+class ObCartPlayer(object):
+    def __init__(self, player):
+        self.player = player
+        self.lock = threading.Lock()
+        self.pipeline = None
+        self.handlers = []
+        self.count = 0
+
+    def play(self, uri, title=""):
+        with self.lock:
+            self.stop_pipeline()
+            # a fresh interpipe name per cart: an ended cart's sink can linger under the old
+            # name, and the mixer input would attach to it instead of the new cart
+            self.count += 1
+            name = "interpipe-cart-" + str(self.count)
+            pipeline = Gst.parse_launch(
+                "uridecodebin name=src ! audioconvert ! audioresample ! capsfilter name=caps ! interpipesink sync=true name="
+                + name
+            )
+            pipeline.get_by_name("src").set_property("uri", uri)
+            pipeline.get_by_name("caps").set_property(
+                "caps", Gst.Caps.from_string(obplayer.Config.setting("audio_caps"))
+            )
+            bus = pipeline.get_bus()
+            bus.add_signal_watch()
+            self.handlers = [
+                bus.connect("message::eos", self.on_done, pipeline),
+                bus.connect("message::error", self.on_done, pipeline),
+            ]
+
+            pipeline.set_state(Gst.State.PAUSED)
+            pipeline.get_state(Gst.CLOCK_TIME_NONE)
+            self.player.outputs["mixer"].cart_on(name)
+            pipeline.set_state(Gst.State.PLAYING)
+            self.pipeline = pipeline
+            obplayer.Log.log("cart: playing " + title, "player")
+
+    def stop(self):
+        with self.lock:
+            self.stop_pipeline()
+
+    def stop_pipeline(self):
+        if self.pipeline is None:
+            return
+        self.player.outputs["mixer"].cart_off()
+        bus = self.pipeline.get_bus()
+        for handler in self.handlers:
+            bus.disconnect(handler)
+        self.handlers = []
+        bus.remove_signal_watch()
+        self.pipeline.set_state(Gst.State.NULL)
+        self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
+        self.pipeline = None
+
+    def on_done(self, bus, message, pipeline):
+        if message.type == Gst.MessageType.ERROR:
+            obplayer.Log.log("cart: " + str(message.parse_error()[0].message), "error")
+        with self.lock:
+            # a newer cart may already have replaced this one
+            if pipeline is self.pipeline:
+                self.stop_pipeline()

@@ -323,7 +323,17 @@ class ObShow(object):
         return self.playlist.playlist
 
     def get_groups(self):
+        # the player's own "System Requests" group (line-in/RTP sources, added at sync) can be
+        # hidden; filtered here so the carts served and the carts played by index always agree
+        if self.groups and not obplayer.Config.setting("live_assist_system_requests"):
+            return [group for group in self.groups if not self.is_system_requests(group)]
         return self.groups
+
+    @staticmethod
+    def is_system_requests(group):
+        return group["name"] == "System Requests" and all(
+            item["media_id"] == -1 for item in group["items"]
+        )
 
     def start_show(self, present_time):
         self.ctrl.stop_requests()
@@ -524,6 +534,16 @@ class ObShow(object):
 
             if fadeout:
                 self.fadeout = True
+                if isinstance(self, ObLiveAssistShow):
+                    # live assist: fade just this track on its deck, so a live source on the
+                    # main channel isn't faded with it (the showfade mixer fade is standard shows only)
+                    end_fade = {
+                        "fade_out": self.show_end_fade(present_time),
+                        "show_end_fade": True,
+                    }
+                else:
+                    # restore the mixer from the showfade fade-out when the track stops
+                    end_fade = {"mixerend": ["primary_on", {}]}
                 self.ctrl.add_request(
                     start_time=self.media_start_time,
                     end_time=self.end_time(),
@@ -535,10 +555,7 @@ class ObShow(object):
                     order_num=media["order_num"],
                     artist=media["artist"],
                     title=media["title"],
-                    mixerend=[
-                        "primary_on",
-                        {},
-                    ],  # restore the mixer from fade-out when the track stops
+                    **end_fade,
                     **fade_in_only,
                 )
             else:
@@ -632,6 +649,15 @@ class ObShow(object):
             0, min(self.now_playing.get("crossfade", 0), remaining, media["duration"])
         )
 
+    # seconds to fade out a track the end of the show will cut (fade_duration), shortened to the
+    # time left; 0 under half a second, like the standard show fade
+    def show_end_fade(self, present_time):
+        fade = min(
+            float(obplayer.Config.setting("fade_duration")),
+            self.end_time() - present_time,
+        )
+        return fade if fade >= 0.5 else 0
+
     # seconds to fade out on pause, or 0 to stop dead
     def pause_fade(self):
         return min(obplayer.Config.setting("pause_fade"), self.fadeable_remaining())
@@ -650,9 +676,10 @@ class ObShow(object):
         if self.show_data["type"] != "live_assist":
             return False
 
-        if group_num < 0 or group_num >= len(self.groups):
+        groups = self.get_groups() or []
+        if group_num < 0 or group_num >= len(groups):
             return False
-        group = self.groups[group_num]["items"]
+        group = groups[group_num]["items"]
 
         if group_item_num < 0 or group_item_num >= len(group):
             return False
@@ -827,14 +854,33 @@ class ObLiveAssistShow(ObShow):
         return True
 
     def play_group_item(self, group_num, group_item_num, seek):
-        if group_num < 0 or group_num >= len(self.groups):
+        groups = self.get_groups() or []
+        if group_num < 0 or group_num >= len(groups):
             return False
-        group = self.groups[group_num]["items"]
+        group = groups[group_num]["items"]
 
         if group_item_num < 0 or group_item_num >= len(group):
             return False
 
         media = group[group_item_num]
+
+        # audio carts are sound effects: fire over whatever is on air and leave the show alone
+        # (playing stays playing, paused stays paused)
+        if media["media_type"] == "audio":
+            uri = obplayer.Sync.media_uri(media["file_location"], media["filename"])
+            if not uri:
+                return False
+            obplayer.Player.carts.play(uri, media["title"])
+            obplayer.PlaylogData.add_entry(
+                media["media_id"],
+                media["artist"],
+                media["title"],
+                time.time(),
+                "liveassist cart",
+            )
+            return True
+
+        # System Requests (line-in, RTP) switch the source: replace the track and hold after
         self.ctrl.stop_requests()
         self.play_media(media, media["duration"] * (seek / 100), time.time())
         self.paused = False

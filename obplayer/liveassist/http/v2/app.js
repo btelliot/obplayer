@@ -13,6 +13,7 @@
     statusAt: 0,          // client time the status was received
     connected: true,
     lastTrack: -1,        // last playlist position seen (kept while a cart plays)
+    cartSweep: null,      // { group, item, start, dur } of the cart last fired (client clock)
     peak: -120,
     peakAt: 0,
     userScrollAt: 0,      // client ms the operator last scrolled/touched the playlist
@@ -382,21 +383,61 @@
         b.dataset.group = gi;
         b.dataset.item = ii;
         var label = document.createElement('span');
-        label.textContent = (item.artist ? item.artist + ' – ' : '') + (item.title || '');
+        label.textContent = item.title || item.artist || '';
         var d = document.createElement('span');
         d.className = 'dur mono';
         d.textContent = dur(item.duration);
         b.appendChild(label);
         b.appendChild(d);
-        armConfirm(b, null, function () {
+        var fire = function () {
           return post('/command/play_group_item', { group_num: gi, group_item_num: ii, position: 0 });
-        });
+        };
+        if (item.media_type === 'audio') {
+          // carts are sound effects: one click fires straight to air over whatever is playing.
+          // The button sweeps over the cart's length; firing again (or another cart) restarts it,
+          // as the player only plays one cart at a time.
+          var length = parseFloat(item.duration) || 0;
+          b.addEventListener('animationend', function () {
+            b.classList.remove('sweeping');
+            var c = state.cartSweep;
+            if (c && c.group === gi && c.item === ii) state.cartSweep = null;
+          });
+          b.addEventListener('click', function () {
+            var sweep = state.cartSweep = { group: gi, item: ii, start: Date.now() / 1000, dur: length };
+            document.querySelectorAll('.cart.sweeping').forEach(function (other) { other.classList.remove('sweeping'); });
+            startSweep(b, length, 0);
+            fire().catch(function () {
+              if (state.cartSweep === sweep) state.cartSweep = null;
+              b.classList.remove('sweeping');
+            });
+          });
+          // the groups are re-rendered every 30 s: pick a running sweep back up where it is
+          var c = state.cartSweep;
+          if (c && c.group === gi && c.item === ii) {
+            var elapsed = Date.now() / 1000 - c.start;
+            if (elapsed < c.dur) startSweep(b, c.dur, elapsed);
+            else state.cartSweep = null;
+          }
+        } else {
+          // System Requests (line-in, RTP) take over the air, so they keep the confirm click
+          armConfirm(b, null, fire);
+        }
         carts.appendChild(b);
       });
       sec.appendChild(name);
       sec.appendChild(carts);
       box.appendChild(sec);
     });
+  }
+
+  // run a cart button's sweep over dur seconds, already elapsed seconds in (restarts it if running)
+  function startSweep(b, dur, elapsed) {
+    if (!(dur > 0)) return;
+    b.classList.remove('sweeping');
+    void b.offsetWidth; // restart the animation
+    b.style.setProperty('--sweep-time', dur + 's');
+    b.style.setProperty('--sweep-delay', (-elapsed) + 's');
+    b.classList.add('sweeping');
   }
 
   function renderLevels(levels) {

@@ -702,6 +702,7 @@ class ObConfigData(ObData):
         self.add_setting("live_assist_enable", "0", "bool")
         self.add_setting("live_assist_port", "23456", "int")
         self.add_setting("live_assist_mic_enable", "0", "bool")
+        self.add_setting("live_assist_system_requests", "1", "bool")
         self.add_setting("live_assist_mic_mode", "auto", "text")
         self.add_setting("live_assist_mic_alsa_device", "default", "text")
         self.add_setting("live_assist_mic_jack_name", "", "text")
