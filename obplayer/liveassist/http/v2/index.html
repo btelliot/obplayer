@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Live Assist</title>
 <link rel="stylesheet" href="/v2/app.css">
+<script>
+  // Apply a remembered light/dark choice before first paint (no flash of the other theme).
+  try { var t = localStorage.getItem('la2.theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 </head>
 <body>
 <div id="offline" class="offline" hidden>Not connected to the player &mdash; retrying&hellip;</div>
@@ -30,7 +34,19 @@
   <span class="muted">ends <b id="show-end" class="mono">--:--</b></span>
   <span id="next-show" class="muted next" hidden>Next: <b id="next-name"></b> &middot; <span id="next-time" class="mono"></span></span>
   <a class="classic" href="/">Classic view</a>
+  <button id="theme-toggle" class="theme-toggle" type="button">
+    <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+    <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+  </button>
 </div>
+
+<div id="runout" class="runout" role="status" hidden></div>
+
+<nav class="mtabs" role="tablist" aria-label="Panels">
+  <button type="button" class="mtab" role="tab" data-mtab="playlist">Playlist</button>
+  <button type="button" class="mtab" role="tab" data-mtab="carts">Carts</button>
+  <button type="button" class="mtab" role="tab" data-mtab="facts">Song facts</button>
+</nav>
 
 <main class="layout">
   <section class="list">
@@ -47,18 +63,18 @@
   <section id="side" class="side">
     <div class="side-head">
       <div class="tabs" role="tablist">
-        <button type="button" class="tab" role="tab" data-tab="carts" aria-selected="true">Carts</button>
-        <button type="button" class="tab" role="tab" data-tab="facts" aria-selected="false">Song facts</button>
+        <button type="button" class="tab" role="tab" data-tab="carts" aria-selected="false">Carts</button>
+        <button type="button" class="tab" role="tab" data-tab="facts" aria-selected="true">Song facts</button>
       </div>
       <button type="button" id="side-toggle" class="side-toggle" title="Collapse panel" aria-expanded="true">
         <span class="side-label">Carts &middot; Song facts</span><span class="chev" aria-hidden="true"></span>
       </button>
     </div>
-    <div id="pane-carts" class="pane" role="tabpanel">
+    <div id="pane-carts" class="pane" role="tabpanel" hidden>
       <div id="groups" class="groups"></div>
       <p id="no-carts" class="muted empty" hidden>No carts for this show.</p>
     </div>
-    <div id="pane-facts" class="pane" role="tabpanel" hidden>
+    <div id="pane-facts" class="pane" role="tabpanel">
       <div id="facts" class="facts"><p class="muted empty">Waiting for the player&hellip;</p></div>
     </div>
   </section>
@@ -66,9 +82,9 @@
 
 <footer class="deck">
   <div class="transport">
-    <button id="btn-prev" class="btn" title="Previous track" aria-label="Previous track">&#9198;</button>
+    <button id="btn-prev" class="btn" title="Previous track" aria-label="Previous track" disabled>&#9198;</button>
     <button id="btn-play" class="btn btn-main" title="Play / Pause" aria-label="Play or pause">&#9654;</button>
-    <button id="btn-next" class="btn" title="Next track" aria-label="Next track">&#9197;</button>
+    <button id="btn-next" class="btn" title="Next track" aria-label="Next track" disabled>&#9197;</button>
   </div>
 
   <div class="now">

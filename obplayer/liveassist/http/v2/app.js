@@ -27,6 +27,11 @@
 
   var $ = function (id) { return document.getElementById(id); };
 
+  // Phones (matches the 600px breakpoint in app.css): monitor + basic control only,
+  // so no per-row Play and no seeking -- too easy to fat-finger on air.
+  var phoneQuery = window.matchMedia('(max-width: 600px)');
+  function isPhone() { return phoneQuery.matches; }
+
   // ---- API ---------------------------------------------------------------
 
   function post(path, args) {
@@ -197,6 +202,15 @@
     $('btn-play').innerHTML = playing ? '&#10073;&#10073;' : '&#9654;';
     $('btn-play').title = playing ? 'Pause' : 'Play';
 
+    // Skipping only works on live assist shows: scheduled (standard/advanced) shows are
+    // clock-locked and the player snaps back to the schedule, restarting or cutting tracks.
+    var canSkip = canSkipTracks();
+    ['btn-prev', 'btn-next'].forEach(function (id) {
+      $(id).disabled = !canSkip;
+      $(id).title = canSkip ? (id === 'btn-prev' ? 'Previous track' : 'Next track')
+        : 'Skipping only works on live assist shows';
+    });
+
     var title = s.title, artist = s.artist, mode = '';
     if (brk) {
       var up = state.playlist[s.track];
@@ -216,6 +230,10 @@
 
   // Players with the stop-after command report stop_after in play_status. Older players
   // don't, and the button falls back to jumping to the next breakpoint row.
+  function canSkipTracks() {
+    return !!state.status && state.status.show_type === 'live_assist';
+  }
+
   function stopAfterSupported() {
     return !!state.status && 'stop_after' in state.status;
   }
@@ -226,6 +244,9 @@
 
     if (stopAfterSupported()) {
       var s = state.status, armed = !!s.stop_after;
+      // Break after track only exists for live assist shows; hide it on scheduled shows.
+      b.hidden = s.show_type !== 'live_assist' && !armed;
+      if (b.hidden) return;
       var why = s.show_type !== 'live_assist' ? 'Only available on live assist shows'
         : inBreak() ? 'Already in a break'
         : s.mode !== 'playlist' ? 'Not while a cart is playing'
@@ -234,15 +255,16 @@
       b.disabled = !armed && !!why;
       if (armed) {
         var ends = Date.now() / 1000 + Math.max(0, currentDuration() - currentPosition());
-        b.textContent = 'Stops at ' + clock(ends);
+        b.textContent = 'Break at ' + clock(ends);
         b.title = 'Holds for talk when this track ends. Click to cancel.';
       } else {
-        b.textContent = 'Stop after track';
+        b.textContent = 'Break after track';
         b.title = why || 'Hold for talk when this track ends; Play starts the next track';
       }
       return;
     }
 
+    b.hidden = false;
     b.classList.remove('armed');
     b.textContent = 'Breakpoint';
     var i = nextBreakpoint();
@@ -290,7 +312,7 @@
     li.appendChild(meta);
     li.appendChild(when);
     li.appendChild(go);
-    li.addEventListener('dblclick', function () { go.click(); });
+    li.addEventListener('dblclick', function () { if (!isPhone()) go.click(); });
     li.addEventListener('click', function (e) {
       if (track.media_type === 'breakpoint' || e.target.closest('.go')) return;
       pickFacts(i);
@@ -331,7 +353,8 @@
         if (showEndLocal && t >= showEndLocal) row.classList.add('past-end');
         t += parseFloat(track.duration) || 0;
       } else if (i === cur && !heldAfter) {
-        when.textContent = track.media_type === 'breakpoint' ? 'now' : 'now · ' + dur(track.duration);
+        when.textContent = track.media_type === 'breakpoint' ? 'now'
+          : (isPhone() ? '' : 'now · ') + dur(track.duration);
       } else {
         when.textContent = track.media_type === 'breakpoint' ? '' : dur(track.duration);
       }
@@ -393,7 +416,7 @@
   // Ticks every 250 ms: clocks, progress bar, countdowns. No network.
   function tick() {
     var now = Date.now() / 1000;
-    var c = clockParts(now, true);
+    var c = clockParts(now, !isPhone());
     $('clock').textContent = c.time;
     $('clock-ampm').textContent = c.ampm;
 
@@ -434,6 +457,7 @@
     }
 
     autoScroll();
+    renderRunout();
     syncSeek();
   }
 
@@ -446,7 +470,7 @@
 
   function seekTarget() {
     var s = state.status;
-    if (!s || s.show_type !== 'live_assist' || s.status !== 'playing' || inBreak() || !currentDuration()) return null;
+    if (isPhone() || !s || s.show_type !== 'live_assist' || s.status !== 'playing' || inBreak() || !currentDuration()) return null;
     if (s.mode === 'playlist' && s.track >= 0) return { key: 'p' + s.track, mode: 'playlist', track: s.track };
     if (s.mode === 'group' && s.group_num >= 0) return { key: 'g' + s.group_num + '.' + s.group_item_num, mode: 'group', group: s.group_num, item: s.group_item_num };
     return null;
@@ -520,6 +544,35 @@
       : post('/command/play_group_item', { group_num: t.group, group_item_num: t.item, position: pct });
     req.then(function () { setTimeout(function () { loadStatus().catch(noop); }, 300); }).catch(noop);
   });
+
+  // Live assist: the server only sends about a slot's worth of tracks, so skipping can leave the
+  // playlist short. When it runs out the player holds a silent break (which also blocks the
+  // fallback) until the show ends, so warn while there's still time to add a cart or go live.
+  function renderRunout() {
+    var s = state.status, box = $('runout');
+    var showLeft = state.showEnd ? state.showEnd - playerNow() : 0;
+    if (!s || s.show_type !== 'live_assist' || showLeft <= 0 || !state.playlist.length) { box.hidden = true; return; }
+
+    var left = 0, from;
+    if (inBreak()) {
+      from = s.track;                       // the track Play will start
+    } else if (s.mode === 'playlist' && s.track >= 0) {
+      left = Math.max(0, currentDuration() - currentPosition());
+      from = s.track + 1;
+    } else {
+      from = Math.max(0, state.lastTrack);  // after a cart, Play restarts the interrupted track
+    }
+    for (var i = from; i < state.playlist.length; i++) {
+      if (state.playlist[i].media_type !== 'breakpoint') left += parseFloat(state.playlist[i].duration) || 0;
+    }
+
+    var gap = showLeft - left;
+    box.hidden = gap <= 10;
+    if (box.hidden) return;
+    box.textContent = 'Playlist runs out at ' + clock(Date.now() / 1000 + left) + ' — '
+      + (gap >= 60 ? Math.round(gap / 60) + ' min' : Math.round(gap) + ' s')
+      + ' before the show ends. Add a cart or go live to avoid dead air.';
+  }
 
   // Keeps the current track near the top of the playlist with two played rows above it.
   // Backs off for 15 s whenever the operator scrolls or touches the list, and never moves
@@ -702,13 +755,14 @@
     row('Mood', track.strMood || album.strMood);
     row('From', artist.strCountry);
     // Solo artists carry born/died years; bands carry formed and (reused) died = split.
-    if (artist.intMembers === '1') {
+    // intMembers alone isn't reliable (Cactus is listed as 1), but bands have no gender.
+    if (artist.intMembers === '1' && artist.strGender) {
       row('Born', artist.intBornYear);
       row('Died', artist.intDiedYear);
     } else {
       row('Formed', artist.intFormedYear);
       row('Split', artist.intDiedYear);
-      row('Members', artist.intMembers);
+      row('Members', artist.intMembers !== '1' ? artist.intMembers : '');
     }
     row('Website', artist.strWebsite ? link(artist.strWebsite, artist.strWebsite.replace(/^https?:\/\//i, '')) : '');
     row('Video', track.strMusicVid ? link(track.strMusicVid, 'Watch the music video') : '');
@@ -725,7 +779,39 @@
     renderPlaylistState();
     showTab('facts');
     setSideOpen(true);
+    if (isPhone()) setMobileTab('facts');
     renderFacts();
+  }
+
+  // ---- light/dark --------------------------------------------------------
+  // Dark by default; the toggle switches it and the choice is remembered per browser
+  // (index.html applies it before first paint).
+
+  function currentTheme() {
+    return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+  }
+
+  function renderThemeToggle() {
+    var b = $('theme-toggle'), cur = currentTheme();
+    b.dataset.current = cur;
+    b.title = 'Switch to ' + (cur === 'dark' ? 'light' : 'dark') + ' mode';
+    b.setAttribute('aria-label', b.title);
+  }
+
+  $('theme-toggle').addEventListener('click', function () {
+    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('la2.theme', next); } catch (e) {}
+    renderThemeToggle();
+  });
+  renderThemeToggle();
+
+  // Phones show one panel at a time: Playlist, Carts or Song facts.
+  function setMobileTab(name) {
+    document.body.dataset.mtab = name;
+    document.querySelectorAll('.mtab').forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.mtab === name)); });
+    if (name !== 'playlist') showTab(name);
+    try { localStorage.setItem('la2.mtab', name); } catch (e) {}
   }
 
   // ---- side panel --------------------------------------------------------
@@ -780,8 +866,9 @@
     var playing = s && (s.status === 'playing' || s.status === 'override');
     command(playing ? '/command/pause' : '/command/play');
   });
-  $('btn-next').addEventListener('click', function () { command('/command/next'); });
-  $('btn-prev').addEventListener('click', function () { command('/command/prev'); });
+  // canSkipTracks() is checked again here so a click can't slip through between status polls.
+  $('btn-next').addEventListener('click', function () { if (canSkipTracks()) command('/command/next'); });
+  $('btn-prev').addEventListener('click', function () { if (canSkipTracks()) command('/command/prev'); });
   // Stop after this track: one click arms, another cancels. Every screen sees the state via
   // play_status, and nothing changes on air until the track ends, so there's no confirm step.
   $('btn-break').addEventListener('click', function () {
@@ -807,13 +894,20 @@
   $('side-toggle').addEventListener('click', function () {
     setSideOpen($('side').classList.contains('collapsed'));
   });
-  var savedTab = 'carts', savedOpen = true;
+  var savedTab = 'facts', savedOpen = true; // Song facts unless this browser last chose Carts
   try {
-    savedTab = localStorage.getItem('la2.sideTab') === 'facts' ? 'facts' : 'carts';
+    savedTab = localStorage.getItem('la2.sideTab') === 'carts' ? 'carts' : 'facts';
     savedOpen = localStorage.getItem('la2.cartsOpen') !== '0';
   } catch (e) {}
   showTab(savedTab);
   setSideOpen(savedOpen);
+
+  document.querySelectorAll('.mtab').forEach(function (t) {
+    t.addEventListener('click', function () { setMobileTab(t.dataset.mtab); });
+  });
+  var savedMtab = 'playlist';
+  try { savedMtab = localStorage.getItem('la2.mtab') || 'playlist'; } catch (e) {}
+  setMobileTab(/^(playlist|carts|facts)$/.test(savedMtab) ? savedMtab : 'playlist');
 
   // Any hands-on scrolling of the playlist pauses auto-scroll for a while.
   ['wheel', 'touchstart', 'pointerdown', 'keydown'].forEach(function (ev) {

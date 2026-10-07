@@ -16,18 +16,17 @@
   --radius: 10px;
   color-scheme: dark;
 }
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    --bg: #f3f5f8;
-    --panel: #ffffff;
-    --panel-2: #eef1f5;
-    --line: #d9dee5;
-    --text: #141a21;
-    --muted: #5f6b79;
-    --accent: #0b6fd6;
-    --played: #9aa4b0;
-    color-scheme: light;
-  }
+/* Light theme, only when picked with the toggle (data-theme on <html>); dark is the default. */
+:root[data-theme="light"] {
+  --bg: #f3f5f8;
+  --panel: #ffffff;
+  --panel-2: #eef1f5;
+  --line: #d9dee5;
+  --text: #141a21;
+  --muted: #5f6b79;
+  --accent: #0b6fd6;
+  --played: #9aa4b0;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -299,3 +298,106 @@ a { color: var(--accent); }
 .btn-break.armed { background: var(--pause); color: #1b1300; }
 .btn-break.armed:hover { background: color-mix(in srgb, var(--pause) 85%, #fff); }
 .ampm { font-size: .4em; font-weight: 600; margin-left: .3em; vertical-align: .15em; }
+
+/* Phone panel switcher (Playlist | Carts | Song facts); only shown on phones. */
+.mtabs { display: none; }
+
+/* Phones: one fixed screen again, one panel at a time, compact timers, and a Spotify-style
+   now-playing bar (title/artist + status, thin progress with times, centred transport). */
+@media (max-width: 600px) {
+  body { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+
+  .timers { position: static; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .timer:last-child:nth-child(odd) { grid-column: auto; }
+  .timer { padding: 6px 10px 8px; }
+  .timer .label { font-size: 11px; letter-spacing: .06em; }
+  .timer-value { font-size: clamp(20px, 6.6vw, 34px); }
+
+  .showbar { display: block; padding: 8px 14px 10px; }
+  .showbar .label { display: none; }
+  .showbar h1 { font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .showbar > .muted { font-size: 14px; }
+  .showbar b, .showbar .next b { font-size: 14px; }
+  .showbar .next { margin-left: 8px; font-size: 14px; }
+  .showbar .classic { display: none; }
+
+  .mtabs { display: flex; flex: none; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .mtab {
+    flex: 1; appearance: none; background: none; border: 0; border-bottom: 3px solid transparent; margin-bottom: -1px;
+    padding: 10px 4px; font: inherit; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); cursor: pointer;
+  }
+  .mtab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+
+  .layout, .layout:has(> .side.collapsed) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); padding: 8px; gap: 0; }
+  body[data-mtab="playlist"] .side,
+  body[data-mtab="carts"] .list,
+  body[data-mtab="facts"] .list { display: none; }
+  .side-head { display: none; }
+  .side.collapsed .pane:not([hidden]) { display: block; }
+
+  .list-head { padding: 10px 14px; }
+  .list-head h2 { display: none; }
+  #list-summary { font-size: 14px; }
+  .btn-break { min-width: 0; padding: 6px 12px; font-size: 14px; border-width: 1px; border-radius: 8px; }
+  .track { grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; padding: 8px 10px; }
+  .track .num { font-size: 15px; }
+  .track .t { font-size: 17px; }
+  .track .a { font-size: 15px; }
+  .track .when { font-size: 14px; }
+  .go { display: none; }
+
+  .meters { display: none; }
+  .deck {
+    position: static; display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+    padding: 14px 20px calc(12px + env(safe-area-inset-bottom));
+  }
+  .now { order: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "line head" "prog prog"; column-gap: 12px; }
+  .now-head { grid-area: head; align-self: start; margin: 4px 0 0; }
+  #mode { display: none; }
+  .now-line { grid-area: line; flex-direction: column; align-items: stretch; gap: 2px; }
+  .now-title { font-size: 22px; line-height: 1.2; }
+  .now-artist { font-size: 16px; }
+  .progress-row { grid-area: prog; grid-template-columns: 1fr 1fr; grid-template-areas: "bar bar" "el du"; gap: 6px 0; margin-top: 14px; font-size: 13px; }
+  .seekbar { grid-area: bar; padding: 4px 0; margin: 0; }
+  #elapsed { grid-area: el; }
+  #duration { grid-area: du; justify-self: end; }
+  .progress { height: 4px; overflow: visible; background: color-mix(in srgb, var(--text) 25%, transparent); }
+  .progress-bar { position: relative; background: var(--text); }
+  .progress-bar::after {
+    content: ""; position: absolute; right: -6px; top: 50%; width: 12px; height: 12px; margin-top: -6px;
+    border-radius: 50%; background: var(--text);
+  }
+  .progress-bar.ending, .progress-bar.ending::after { background: var(--pause); }
+  .transport { order: 2; justify-content: center; gap: 36px; }
+  .transport .btn { width: 52px; height: 52px; font-size: 30px; background: none; border: 0; color: var(--text); }
+  .transport .btn-main { width: 68px; height: 68px; font-size: 28px; background: var(--text); color: var(--bg); }
+}
+
+/* Light/dark toggle in the On Air bar: shows the theme you'd switch to (sun in dark, moon in light). */
+.theme-toggle {
+  appearance: none; flex: none; align-self: center; display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 8px;
+  background: none; color: var(--muted); cursor: pointer;
+}
+.theme-toggle:hover { color: var(--text); border-color: var(--accent); }
+.theme-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.theme-toggle[data-current="dark"] .icon-moon,
+.theme-toggle[data-current="light"] .icon-sun { display: none; }
+@media (max-width: 600px) {
+  .showbar { position: relative; padding-right: 54px; }
+  .theme-toggle { position: absolute; top: 9px; right: 12px; width: 32px; height: 32px; }
+}
+
+/* Light theme: amber/red digits need to be darker to read on the pale glow tint. */
+:root[data-theme="light"] .timer-value.attention,
+:root[data-theme="light"] .timer.flash .timer-value { color: #9a6200; }
+:root[data-theme="light"] .timer.flash-urgent .timer-value { color: #c62828; }
+
+/* Live assist: warns when the remaining tracks run out before the show ends (dead air). */
+.runout {
+  flex: none; padding: 8px 20px; font-size: 16px; font-weight: 600; color: var(--text);
+  background: color-mix(in srgb, var(--danger) 20%, var(--panel)); border-bottom: 2px solid var(--danger);
+}
+.runout[hidden] { display: none; }
+@media (max-width: 600px) { .runout { padding: 6px 14px; font-size: 14px; } }
