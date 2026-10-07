@@ -509,6 +509,13 @@ class ObConfigData(ObData):
             except ValueError:
                 return "crossfade_id_max_length_invalid"
 
+        if setting_name == "pause_fade":
+            try:
+                if not 0 <= float(setting_value) <= 5:
+                    return "pause_fade_invalid"
+            except ValueError:
+                return "pause_fade_invalid"
+
         return None
 
     """
@@ -527,6 +534,7 @@ class ObConfigData(ObData):
         self.add_setting("fade_duration", "5.0", "float")
         self.add_setting("crossfade_enable", "1", "bool")
         self.add_setting("crossfade_id_max_length", "60", "float")
+        self.add_setting("pause_fade", "0.5", "float")
         self.add_setting("audio_out_mode", "auto", "text")
         self.add_setting("audio_out_alsa_device", "default", "text")
         self.add_setting("audio_out_jack_name", "", "text")

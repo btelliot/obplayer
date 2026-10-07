@@ -455,6 +455,31 @@ class ObPlayer(object):
             else:
                 self.stop_request(output)
 
+    # fade out a controller's audio over the given seconds and then stop it (live assist pause).
+    # Unlike a skip, the request keeps the output until the fade is done, so whatever follows
+    # (the paused break) doesn't repatch the output and cut the fade off. Returns the stop time.
+    def fade_stop_controller_requests(self, ctrl, seconds):
+        now = time.time()
+        stop_at = now
+        for output in self.get_controller_requests(ctrl):
+            req = self.requests[output]
+            if req is None:
+                continue
+            if req["media_type"] != "audio":
+                self.stop_request(output)
+                continue
+            # already fading out at the end of the track: let that fade finish
+            if not req.get("fading") and now + seconds < req["end_time"]:
+                req["fading"] = True
+                req["end_time"] = now + seconds
+                req["fade_out"] = seconds
+                req["overlap"] = 0
+                # "stop after this track" mustn't restore a crossfade onto the fade-out
+                req.pop("saved_transition", None)
+                self.pipes["audio"].fade_out(req, now, req["end_time"])
+            stop_at = max(stop_at, req["end_time"])
+        return stop_at
+
     # turn the crossfade at the end of a controller's current audio request off (e.g. "stop after
     # this track") or back on
     def set_controller_transition(self, ctrl, enabled):
@@ -716,6 +741,7 @@ class ObPlayerController(object):
         fade_in=0,
         fade_out=0,
         overlap=0,
+        fade_in_resume=False,
     ):
         if not self.enabled:
             return
@@ -762,6 +788,8 @@ class ObPlayerController(object):
             "fade_in": fade_in,
             "fade_out": fade_out,
             "overlap": overlap,
+            # resuming from pause: fade in from silence when the deck starts, with no outgoing deck
+            "fade_in_resume": fade_in_resume,
         }
 
         self.insert_request(req)

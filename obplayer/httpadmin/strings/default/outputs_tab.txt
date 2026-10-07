@@ -13,6 +13,9 @@ Outputs Tab
   crossfade_id_max_length: Station ID Max Length (seconds)
   crossfade_id_max_length_tooltip: An item shorter than this, with no crossfade, following a crossfaded track, is treated as a station ID and never faded.
   crossfade_id_max_length_invalid: The station ID max length must be a number of seconds, 0 or more.
+  pause_fade: Live Assist Pause Fade (seconds)
+  pause_fade_tooltip: Fade out when a live assist track is paused, and back in when it resumes. 0 to stop and start without a fade.
+  pause_fade_invalid: The pause fade must be a number of seconds from 0 to 5.
 
   Audio Output Settings: Audio Output Settings
 

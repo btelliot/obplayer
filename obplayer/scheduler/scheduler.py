@@ -460,7 +460,7 @@ class ObShow(object):
 
         return transition
 
-    def play_media(self, media, offset, present_time, fade_in=None):
+    def play_media(self, media, offset, present_time, fade_in=None, fade_in_resume=False):
 
         self.now_playing = media
         self.pause_position = 0
@@ -513,8 +513,14 @@ class ObShow(object):
                 fadeout = True
 
             transition = self.transition_for(media, fade_in)
+            if transition and fade_in_resume:
+                transition["fade_in_resume"] = True
             # tracks cut or faded by the end of the show only keep their fade in
-            fade_in_only = {"fade_in": transition["fade_in"]} if transition else {}
+            fade_in_only = {
+                key: transition[key]
+                for key in ("fade_in", "fade_in_resume")
+                if key in transition
+            }
 
             if fadeout:
                 self.fadeout = True
@@ -595,8 +601,9 @@ class ObShow(object):
                 self.ctrl.stop_requests()
                 self.play_media(media, media["duration"] * (seek / 100), time.time())
 
-    # seconds to crossfade when the operator skips to media, or 0 for a hard cut
-    def skip_crossfade(self, media):
+    # seconds left of the playing track if the operator can fade it (live assist, crossfades on,
+    # and the scheduler's audio actually on the audio output), otherwise 0
+    def fadeable_remaining(self):
         if not isinstance(self, ObLiveAssistShow) or not obplayer.Config.setting(
             "crossfade_enable"
         ):
@@ -607,17 +614,37 @@ class ObShow(object):
             playing is None
             or self.media_start_time == 0
             or playing["media_type"] != "audio"
-            or media["media_type"] != "audio"
         ):
             return 0
 
-        # only if the scheduler's track is actually on the audio output
         req = obplayer.Player.requests["audio"]
         if req is None or req["controller"] != self.ctrl or req["media_type"] != "audio":
             return 0
 
-        remaining = self.media_start_time + playing["duration"] - time.time()
-        return max(0, min(playing.get("crossfade", 0), remaining, media["duration"]))
+        return max(0, self.media_start_time + playing["duration"] - time.time())
+
+    # seconds to crossfade when the operator skips to media, or 0 for a hard cut
+    def skip_crossfade(self, media):
+        remaining = self.fadeable_remaining()
+        if remaining <= 0 or media["media_type"] != "audio":
+            return 0
+        return max(
+            0, min(self.now_playing.get("crossfade", 0), remaining, media["duration"])
+        )
+
+    # seconds to fade out on pause, or 0 to stop dead
+    def pause_fade(self):
+        return min(obplayer.Config.setting("pause_fade"), self.fadeable_remaining())
+
+    # seconds to fade back in when resuming media at offset, or 0 to start at full volume
+    def resume_fade(self, media, offset):
+        if (
+            not isinstance(self, ObLiveAssistShow)
+            or not obplayer.Config.setting("crossfade_enable")
+            or media["media_type"] != "audio"
+        ):
+            return 0
+        return max(0, min(obplayer.Config.setting("pause_fade"), media["duration"] - offset))
 
     def play_group_item(self, group_num, group_item_num, seek):
         if self.show_data["type"] != "live_assist":
@@ -639,15 +666,25 @@ class ObShow(object):
 
     def pause(self, syncing=False):
         if not self.paused:
+            fade = 0 if syncing else self.pause_fade()
+            now = time.time()
             self.paused = True
-            self.pause_position = time.time() - self.media_start_time
+            # the position Pause was pressed at, so resuming replays the faded-out tail
+            self.pause_position = now - self.media_start_time
             self.media_start_time = 0
-            self.ctrl.stop_requests()
+            if fade > 0:
+                self.ctrl.clear_queue()
+                break_start = obplayer.Player.fade_stop_controller_requests(self.ctrl, fade)
+            else:
+                self.ctrl.stop_requests()
+                break_start = now
             if syncing:
                 self.ctrl.stop_requests()
             else:
+                # the break waits for the fade: starting it repatches the output and cuts the fade off
                 self.ctrl.add_request(
                     media_type="break",
+                    start_time=break_start,
                     end_time=self.end_time(),
                     title="show paused break",
                 )
@@ -659,7 +696,14 @@ class ObShow(object):
             if self.now_playing is None:
                 self.play_current(time.time())
             else:
-                self.play_media(self.now_playing, self.pause_position, time.time())
+                fade = self.resume_fade(self.now_playing, self.pause_position)
+                self.play_media(
+                    self.now_playing,
+                    self.pause_position,
+                    time.time(),
+                    fade_in=fade if fade > 0 else None,
+                    fade_in_resume=fade > 0,
+                )
                 self.pause_position = 0
         elif not self.auto_advance:
             self.auto_advance = True
@@ -1134,6 +1178,22 @@ class ObScheduler:
         data["title"] = request["title"]
         data["duration"] = request["duration"]
         data["position"] = time.time() - request["start_time"]
+
+        # paused: report the paused track where it stopped, not the "show paused break" holding
+        # the output (its position counts up from the pause, against a show-length duration)
+        show = self.present_show
+        if (
+            show is not None
+            and show.paused
+            and show.now_playing is not None
+            and request["controller"] == self.ctrl
+            and request["media_type"] == "break"
+            and 0 <= show.pause_position <= float(show.now_playing["duration"])
+        ):
+            data["artist"] = show.now_playing["artist"]
+            data["title"] = show.now_playing["title"]
+            data["duration"] = float(show.now_playing["duration"])
+            data["position"] = show.pause_position
 
         if self.present_show != None and self.present_show.now_playing != None:
             now_playing = self.present_show.now_playing

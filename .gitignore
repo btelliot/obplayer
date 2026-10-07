@@ -16,3 +16,6 @@ docker/.DS_Store
 docker-compose.yml
 .DS_Store
 .dockerignore
+docker/obplayer-rtp.sdp
+docker/icecast/entrypoint.sh
+docker/icecast/Dockerfile

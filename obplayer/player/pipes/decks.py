@@ -250,11 +250,16 @@ class ObAudioDeckPipeline(ObGstPipeline):
             # only fade in under an outgoing deck; with nothing playing out (a hard cut, "stop after
             # this track", a restart) start at full volume
             fade_in = req.get("fade_in", 0) or 0
-            if not self.decks[1 - index].is_playing():
+            fade_start = req["start_time"]
+            if req.get("fade_in_resume"):
+                # resuming from pause: fade up from silence starting now, since start_time is
+                # where the track would have begun, not where it picks up
+                fade_start = time.time()
+            elif not self.decks[1 - index].is_playing():
                 fade_in = 0
 
-            if fade_in > 0 and time.time() < req["start_time"] + fade_in:
-                self.ramp(index, req["start_time"], req["start_time"] + fade_in, "in")
+            if fade_in > 0 and time.time() < fade_start + fade_in:
+                self.ramp(index, fade_start, fade_start + fade_in, "in")
             else:
                 self.volumes[index].set_property("volume", 1.0)
 
