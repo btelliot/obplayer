@@ -54,6 +54,13 @@ class ObRemoteData(obplayer.ObData):
             obplayer.Log.log("media table not found, creating", "data")
             self.shows_media_create_table()
 
+        # databases restored from before crossfade support won't have the column yet
+        if not self.column_exists("shows_media", "crossfade"):
+            obplayer.Log.log("adding crossfade column to media table", "data")
+            self.execute(
+                "ALTER TABLE shows_media ADD COLUMN crossfade NUMERIC DEFAULT 0"
+            )
+
         if not self.table_exists("shows_voicetracks"):
             obplayer.Log.log("media table not found, creating", "data")
             self.shows_voicetracks_create_table()
@@ -112,9 +119,15 @@ class ObRemoteData(obplayer.ObData):
 
     def shows_media_create_table(self):
         self.execute(
-            "CREATE TABLE shows_media (id INTEGER PRIMARY KEY, local_show_id INTEGER, media_id INTEGER, show_id INTEGER, order_num INTEGER, filename TEXT, artist TEXT, title TEXT, offset NUMERIC, duration NUMERIC, media_type TEXT, file_hash TEXT, file_size INT, file_location TEXT, approved INT, archived INT)"
+            "CREATE TABLE shows_media (id INTEGER PRIMARY KEY, local_show_id INTEGER, media_id INTEGER, show_id INTEGER, order_num INTEGER, filename TEXT, artist TEXT, title TEXT, offset NUMERIC, duration NUMERIC, media_type TEXT, file_hash TEXT, file_size INT, file_location TEXT, approved INT, archived INT, crossfade NUMERIC DEFAULT 0)"
         )
         self.execute("CREATE INDEX local_show_id_index on shows_media (local_show_id)")
+
+    def column_exists(self, table, column):
+        for row in self.execute("PRAGMA table_info(" + table + ")"):
+            if row[1] == column:
+                return True
+        return False
 
     def shows_voicetracks_create_table(self):
         self.execute(
@@ -351,7 +364,7 @@ class ObRemoteData(obplayer.ObData):
     # Given media id, show id, order number, filename, artist, title, duration, and media type, add show media.
     #
     def show_media_add(self, local_show_id, show_id, media_item):
-        query = "INSERT into shows_media VALUES (null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        query = "INSERT into shows_media VALUES (null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         bindings = (
             str(local_show_id),
             str(media_item["id"]),
@@ -368,6 +381,7 @@ class ObRemoteData(obplayer.ObData):
             media_item["file_location"],
             media_item["approved"],
             media_item["archived"],
+            media_item.get("crossfade", 0),
         )
 
         self.execute(query, bindings)
@@ -710,7 +724,7 @@ class ObRemoteData(obplayer.ObData):
     #
     def get_show_media(self, local_show_id):
         rows = self.execute(
-            "SELECT filename,order_num,duration,media_type,artist,title,media_id,file_location,offset,file_size from shows_media where local_show_id=? order by offset",
+            "SELECT filename,order_num,duration,media_type,artist,title,media_id,file_location,offset,file_size,crossfade from shows_media where local_show_id=? order by offset,order_num",
             (str(local_show_id),),
         )
 
@@ -728,6 +742,7 @@ class ObRemoteData(obplayer.ObData):
             media_data["file_location"] = row[7]
             media_data["media_type"] = row[3]
             media_data["file_size"] = row[9]
+            media_data["crossfade"] = float(row[10] or 0)
 
             media.append(media_data)
 

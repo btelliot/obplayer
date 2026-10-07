@@ -49,6 +49,10 @@ class ObGstPipeline(object):
         obplayer.Log.log(self.name + ": stopped " + label, "debug")
         self.wait_state(Gst.State.NULL)
 
+    # called before a new request is loaded into this pipe
+    def cue_stop(self, label=""):
+        self.stop(label)
+
     def quit(self):
         self.wait_state(Gst.State.NULL)
 

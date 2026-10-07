@@ -5,3 +5,14 @@
 venv
 .venv
 obplayer_loop
+docs/CrossfadePlan.md
+docker/seed_settings.py
+docker/README.md
+docker/icecast.xml
+docker/entrypoint.sh
+docker/Dockerfile
+docker/CROSSFADE_TEST_PLAN.md
+docker/.DS_Store
+docker-compose.yml
+.DS_Store
+.dockerignore

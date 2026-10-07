@@ -130,7 +130,110 @@ class ObPlaylist(object):
             return None
         return self.playlist[self.pos + 1]["offset"]
 
-    def advance_to_current(self, present_offset, media_type=None):
+    #
+    # Work out crossfade transitions from observer's per-item crossfade values (seconds of overlap
+    # with the next item; observer has already moved the next item's offset earlier by that amount).
+    #
+    # Sets on each item:
+    #   fade_in   seconds to ramp up from silence at the start
+    #   fade_out  seconds before the end to start fading out
+    #   overlap   seconds before the end that the next item starts
+    #
+    # Station IDs are never faded. Observer doesn't mark them, so an item counts as one when it has no
+    # crossfade of its own, follows a crossfaded track, and is shorter than crossfade_id_max_length.
+    #   track -> track (X):  fade out X, next starts X before the end, fades in over X
+    #   track -> ID (X):     fade out X, ID starts at full volume X/3 before the end (2/3 into the fade)
+    #   ID -> track:         ID plays at full volume, next track fades in under its last 2X/3
+    # Offsets are adjusted to match, which moves each ID 2X/3 later; the track after it lands back
+    # on observer's offset.
+    #
+    def plan_transitions(self):
+        enabled = obplayer.Config.setting("crossfade_enable")
+        try:
+            id_max_length = float(obplayer.Config.setting("crossfade_id_max_length"))
+        except (TypeError, ValueError):
+            id_max_length = 60.0
+
+        items = self.playlist
+
+        def is_audio(item):
+            return item["media_type"] == "audio"
+
+        for index, item in enumerate(items):
+            item.setdefault("crossfade", 0.0)
+            item["fade_in"] = 0.0
+            item["fade_out"] = 0.0
+            item["overlap"] = 0.0
+            previous = items[index - 1] if index > 0 else None
+            item["is_station_id"] = bool(
+                previous
+                and is_audio(item)
+                and is_audio(previous)
+                and item["crossfade"] <= 0
+                and previous["crossfade"] > 0
+                and item["duration"] < id_max_length
+            )
+
+        if enabled:
+            for index in range(len(items) - 1):
+                item = items[index]
+                following = items[index + 1]
+                if not is_audio(item) or not is_audio(following):
+                    continue
+
+                crossfade = min(item["crossfade"], item["duration"], following["duration"])
+                if crossfade <= 0:
+                    continue
+
+                if not following["is_station_id"]:
+                    item["fade_out"] = crossfade
+                    item["overlap"] = crossfade
+                    following["fade_in"] = crossfade
+                    continue
+
+                # track -> station ID
+                item["fade_out"] = crossfade
+                item["overlap"] = crossfade / 3
+
+                # station ID -> track: fade the track in under the ID's end, but never start it
+                # before the track ahead of the ID has finished. Not into another short item with
+                # no crossfade (likely a second ID).
+                after = items[index + 2] if index + 2 < len(items) else None
+                if (
+                    after
+                    and is_audio(after)
+                    and not (after["crossfade"] <= 0 and after["duration"] < id_max_length)
+                ):
+                    overlap = min(
+                        crossfade * 2 / 3,
+                        following["duration"] - crossfade / 3,
+                        after["duration"],
+                    )
+                    if overlap > 0:
+                        following["overlap"] = overlap
+                        after["fade_in"] = overlap
+
+        # observer subtracted each item's crossfade from the next item's offset; apply our own overlap instead
+        shift = 0.0
+        for index in range(1, len(items)):
+            shift += items[index - 1]["crossfade"] - items[index - 1]["overlap"]
+            items[index]["offset"] += shift
+
+    def advance_to_current(self, present_offset, media_type=None, latest=False):
+        # with crossfades two items can be current at once; latest picks the one that started last
+        if latest:
+            for i in reversed(range(0, len(self.playlist))):
+                if (
+                    present_offset + 0.05 >= self.playlist[i]["offset"]
+                    and present_offset
+                    <= self.playlist[i]["offset"] + self.playlist[i]["duration"]
+                    and (not media_type or media_type == self.playlist[i]["media_type"])
+                ):
+                    self.pos = i
+                    return True
+            self.pos = len(self.playlist)
+            return False
+
         for i in range(0, len(self.playlist)):
             if (
                 present_offset >= self.playlist[i]["offset"]
@@ -145,6 +248,9 @@ class ObPlaylist(object):
 
 
 class ObShow(object):
+    # crossfaded items overlap; when finding the current item, use the one that started last
+    prefer_latest_item = True
+
     def __init__(self):
         self.paused = False
         self.pause_position = 0
@@ -175,6 +281,8 @@ class ObShow(object):
             self = ObShow()
         self.show_data = data
         self.playlist = ObPlaylist(self.show_data["id"])
+        if data["type"] != "advanced":
+            self.playlist.plan_transitions()
         self.groups = obplayer.RemoteData.load_groups(self.show_data["id"])
 
         return self
@@ -221,7 +329,10 @@ class ObShow(object):
         self.ctrl.stop_requests()
 
         # find the track that should play at the present time
-        self.playlist.advance_to_current(present_time - self.show_data["start_time"])
+        self.playlist.advance_to_current(
+            present_time - self.show_data["start_time"],
+            latest=self.prefer_latest_item,
+        )
         obplayer.Log.log(
             "starting at track number " + str(self.playlist.pos), "scheduler"
         )
@@ -230,8 +341,13 @@ class ObShow(object):
 
     def play_next(self, present_time, media_class=None):
         # try advancing to the current track (must be done before checking is_finished since this is what advances the track position)
-        if self.playlist.advance_to_current(present_time - self.start_time()):
-            self.play_current(present_time)
+        if self.playlist.advance_to_current(
+            present_time - self.start_time(), latest=self.prefer_latest_item
+        ):
+            # don't request the same track twice (both the player's request query and the scheduled
+            # update can get here, and the outgoing track of a crossfade is no longer the player's request)
+            if not self.ctrl.has_request_for(self.playlist.current()["order_num"]):
+                self.play_current(present_time)
 
         if self.is_paused() or self.playlist.is_finished():
             self.ctrl.stop_requests()
@@ -324,7 +440,27 @@ class ObShow(object):
             padstart=voicetrack_media["fadeout"],
         )
 
-    def play_media(self, media, offset, present_time):
+    # crossfade values for a media item's request (see ObPlaylist.plan_transitions)
+    def transition_for(self, media, fade_in=None):
+        if media["media_type"] != "audio" or not obplayer.Config.setting(
+            "crossfade_enable"
+        ):
+            return {}
+
+        transition = {
+            "fade_in": media.get("fade_in", 0) if fade_in is None else fade_in,
+            "fade_out": media.get("fade_out", 0),
+            "overlap": media.get("overlap", 0),
+        }
+
+        # live assist "stop after this track": play it out, no crossfade into the next one
+        if self.stop_after:
+            transition["fade_out"] = 0
+            transition["overlap"] = 0
+
+        return transition
+
+    def play_media(self, media, offset, present_time, fade_in=None):
 
         self.now_playing = media
         self.pause_position = 0
@@ -376,6 +512,10 @@ class ObShow(object):
             ):
                 fadeout = True
 
+            transition = self.transition_for(media, fade_in)
+            # tracks cut or faded by the end of the show only keep their fade in
+            fade_in_only = {"fade_in": transition["fade_in"]} if transition else {}
+
             if fadeout:
                 self.fadeout = True
                 self.ctrl.add_request(
@@ -393,6 +533,7 @@ class ObShow(object):
                         "primary_on",
                         {},
                     ],  # restore the mixer from fade-out when the track stops
+                    **fade_in_only,
                 )
             else:
                 self.fadeout = False
@@ -408,6 +549,7 @@ class ObShow(object):
                         order_num = media["order_num"],
                         artist = media["artist"],
                         title = media["title"],
+                        **fade_in_only,
                     )
                 else:
                     self.ctrl.add_request(
@@ -419,6 +561,7 @@ class ObShow(object):
                         artist = media["artist"],
                         title = media["title"],
                         duration = media["duration"],
+                        **transition,
                     )
 
             obplayer.Sync.now_playing_update(
@@ -434,9 +577,47 @@ class ObShow(object):
         self.paused = False
         self.auto_advance = True
         if not self.playlist.is_finished():
-            self.ctrl.stop_requests()
             media = self.playlist.current()
-            self.play_media(media, media["duration"] * (seek / 100), time.time())
+            # seeking into a track (e.g. the v2 seek bar) is a straight jump; only starting a
+            # track from the top crossfades
+            fade = self.skip_crossfade(media) if seek == 0 else 0
+            if fade > 0:
+                # live assist next/jump: crossfade from the playing track using its own crossfade length
+                self.ctrl.clear_queue()
+                obplayer.Player.fade_out_controller_requests(self.ctrl, fade)
+                self.play_media(
+                    media,
+                    media["duration"] * (seek / 100),
+                    time.time(),
+                    fade_in=0 if media.get("is_station_id") else fade,
+                )
+            else:
+                self.ctrl.stop_requests()
+                self.play_media(media, media["duration"] * (seek / 100), time.time())
+
+    # seconds to crossfade when the operator skips to media, or 0 for a hard cut
+    def skip_crossfade(self, media):
+        if not isinstance(self, ObLiveAssistShow) or not obplayer.Config.setting(
+            "crossfade_enable"
+        ):
+            return 0
+
+        playing = self.now_playing
+        if (
+            playing is None
+            or self.media_start_time == 0
+            or playing["media_type"] != "audio"
+            or media["media_type"] != "audio"
+        ):
+            return 0
+
+        # only if the scheduler's track is actually on the audio output
+        req = obplayer.Player.requests["audio"]
+        if req is None or req["controller"] != self.ctrl or req["media_type"] != "audio":
+            return 0
+
+        remaining = self.media_start_time + playing["duration"] - time.time()
+        return max(0, min(playing.get("crossfade", 0), remaining, media["duration"]))
 
     def play_group_item(self, group_num, group_item_num, seek):
         if self.show_data["type"] != "live_assist":
@@ -521,6 +702,11 @@ class ObLiveAssistShow(ObShow):
 
     def play_next(self, present_time, media_class=None):
         if self.is_paused() or self.playlist.is_finished():
+            # already holding a break (a breakpoint, "stop after this track", or pause): keep it.
+            # The player can ask again in the same pass for its other outputs, and replacing the
+            # "live assist breakpoint" break would hide the break from the live assist UI.
+            if self.ctrl.has_requests():
+                return False
             self.ctrl.stop_requests()
             self.ctrl.add_request(
                 media_type="break", end_time=self.end_time(), title="show paused break"
@@ -613,6 +799,8 @@ class ObLiveAssistShow(ObShow):
 
 
 class ObAdvancedShow(ObShow):
+    prefer_latest_item = False
+
     def play_next(self, present_time, media_class=None):
         # TODO there is a problem with the first play (is this still an issue?)
         # increment (advance to current) before checking if finished
@@ -867,6 +1055,8 @@ class ObScheduler:
 
         with self.lock:
             self.present_show.stop_after = bool(enable)
+            # the playing track may already have its crossfade set up
+            obplayer.Player.set_controller_transition(self.ctrl, not enable)
         return True
 
     def unpause_show(self):

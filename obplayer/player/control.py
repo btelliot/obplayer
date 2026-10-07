@@ -82,9 +82,7 @@ class ObPlayer(object):
             self.requests[request] = None
 
         self.pipes = {}
-        self.pipes["audio"] = pipes.ObAudioPlayBinPipeline(
-            "audio-playbin", self, obplayer.Config.setting("audio_out_visualization")
-        )
+        self.pipes["audio"] = pipes.ObAudioDeckPipeline("audio-decks", self)
         self.pipes["video"] = pipes.ObPlayBinPipeline("video-playbin", self)
         self.pipes["voicetrack"] = pipes.ObVoicetrackPipeline(
             "voicetrack-pipeline", self
@@ -163,6 +161,9 @@ class ObPlayer(object):
         while not self.thread.stopflag.wait(0.1):
             try:
                 present_time = time.time()
+
+                # start crossfades and free the output for the next track (before new requests are picked up below)
+                self.update_transitions(present_time)
 
                 # stop any requests that have reached their end time and restore any outputs that may have been usurped by the now stopped request
                 restore = False
@@ -269,6 +270,22 @@ class ObPlayer(object):
 
         self.audio_levels = None
         request_pipe = self.pipes[req["media_type"]]
+
+        # a controller replacing its own audio track: let the old one play out if it's at its
+        # crossfade point, otherwise stop it (rather than requeuing it when the outputs are repatched)
+        current = self.requests["audio"]
+        if (
+            req["media_type"] == "audio"
+            and current is not None
+            and current["media_type"] == "audio"
+            and current["controller"] == req["controller"]
+        ):
+            if current["overlap"] > 0 and time.time() >= (
+                current["end_time"] - current["overlap"] - 0.5
+            ):
+                self.release_request("audio")
+            else:
+                self.stop_request("audio")
 
         stop_list = []
         if req["play_mode"] == "exclusive":
@@ -382,9 +399,86 @@ class ObPlayer(object):
             time.sleep(req["padstart"])
 
         # set up and play the request
-        request_pipe.stop("by execute request")
+        request_pipe.cue_stop("by execute request")
         request_pipe.set_request(req)
         request_pipe.start()
+
+    # start the fade-out and release the audio request when it reaches its crossfade points
+    def update_transitions(self, present_time):
+        req = self.requests["audio"]
+        if req is None or req["media_type"] != "audio":
+            return
+
+        if (
+            req["fade_out"] > 0
+            and not req.get("fading")
+            and present_time >= req["end_time"] - req["fade_out"]
+        ):
+            req["fading"] = True
+            self.pipes["audio"].fade_out(
+                req, req["end_time"] - req["fade_out"], req["end_time"]
+            )
+
+        if req["overlap"] > 0 and present_time >= req["end_time"] - req["overlap"]:
+            self.release_request("audio")
+
+    # free the output while the request's deck plays out to stop_at (default: its end time)
+    def release_request(self, output, stop_at=None):
+        req = self.requests[output]
+        if req is None:
+            return
+
+        self.pipes[req["media_type"]].release(
+            req, stop_at if stop_at is not None else req["end_time"]
+        )
+
+        if req["onend"]:
+            req["onend"]()
+
+        for name in self.requests.keys():
+            if self.requests[name] == req:
+                self.requests[name] = None
+
+        self.request_update.set()
+
+    # fade out a controller's audio over the given seconds, starting now (live assist skip)
+    def fade_out_controller_requests(self, ctrl, seconds):
+        now = time.time()
+        for output in self.get_controller_requests(ctrl):
+            req = self.requests[output]
+            if req is None:
+                continue
+            if req["media_type"] == "audio":
+                req["fading"] = True
+                self.pipes["audio"].fade_out(req, now, now + seconds)
+                self.release_request(output, now + seconds)
+            else:
+                self.stop_request(output)
+
+    # turn the crossfade at the end of a controller's current audio request off (e.g. "stop after
+    # this track") or back on
+    def set_controller_transition(self, ctrl, enabled):
+        # the request may still be queued (e.g. just after a seek), so update those too
+        with ctrl.lock:
+            queued = [req for req in ctrl.queue if req["media_type"] == "audio"]
+        for req in queued:
+            self.set_request_transition(req, enabled)
+
+        req = self.requests["audio"]
+        if req is not None and req["controller"] == ctrl and req["media_type"] == "audio":
+            self.set_request_transition(req, enabled)
+
+    def set_request_transition(self, req, enabled):
+        if not enabled:
+            if "saved_transition" not in req:
+                req["saved_transition"] = (req["fade_out"], req["overlap"])
+            req["fade_out"] = 0
+            req["overlap"] = 0
+            if req.get("fading"):
+                req["fading"] = False
+                self.pipes["audio"].cancel_fade(req)
+        elif "saved_transition" in req:
+            (req["fade_out"], req["overlap"]) = req.pop("saved_transition")
 
     def stop_request(self, output):
         if self.requests[output] == None:
@@ -486,16 +580,29 @@ class ObPlayer(object):
 
     def add_inter_tap(self, name):
         with self.lock:
-            if self.patches["audio"]:
+            # the audio decks only need their mix pipeline (which holds the output bin) stopped; the decks keep playing
+            decks = self.pipes[self.patches["audio"]] if self.patches["audio"] else None
+            if decks is not None and not hasattr(decks, "stop_output"):
+                decks = None
+
+            if decks is not None:
+                decks.stop_output()
+                audio_state = False
+            elif self.patches["audio"]:
                 audio_state = self.pipes[self.patches["audio"]].is_playing()
                 self.pipes[self.patches["audio"]].stop()
 
-            if self.patches["visual"]:
+            visual_state = False
+            if self.patches["visual"] and not (
+                decks is not None and self.patches["visual"] == self.patches["audio"]
+            ):
                 visual_state = self.pipes[self.patches["visual"]].is_playing()
                 self.pipes[self.patches["visual"]].stop()
 
             obplayer.Player.outputs["audio"].add_inter_tap(name + ":audio")
             obplayer.Player.outputs["visual"].add_inter_tap(name + ":video")
+            if decks is not None:
+                decks.start_output()
             if self.patches["audio"] and audio_state:
                 self.pipes[self.patches["audio"]].start()
             if (
@@ -606,6 +713,9 @@ class ObPlayerController(object):
         mixerstart=None,
         mixerend=None,
         padstart=None,
+        fade_in=0,
+        fade_out=0,
+        overlap=0,
     ):
         if not self.enabled:
             return
@@ -646,6 +756,12 @@ class ObPlayerController(object):
             "mixerstart": mixerstart,
             "mixerend": mixerend,
             "padstart": padstart,
+            # crossfade transition (audio decks): ramp up over fade_in seconds from the start; start
+            # fading out fade_out seconds before the end; free the output for the next request
+            # overlap seconds before the end while this one plays out
+            "fade_in": fade_in,
+            "fade_out": fade_out,
+            "overlap": overlap,
         }
 
         self.insert_request(req)
@@ -689,6 +805,17 @@ class ObPlayerController(object):
     def has_requests(self):
         if len(self.queue) > 0 or len(self.player.get_controller_requests(self)) > 0:
             return True
+        return False
+
+    # is a request for this playlist position queued or playing?
+    def has_request_for(self, order_num):
+        with self.lock:
+            if any(req["order_num"] == order_num for req in self.queue):
+                return True
+        for output in self.player.get_controller_requests(self):
+            req = self.player.requests[output]
+            if req is not None and req["order_num"] == order_num:
+                return True
         return False
 
     def request_is_playing(self):

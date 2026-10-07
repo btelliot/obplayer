@@ -102,6 +102,12 @@ def xml_get_media_item(node, voicetrack=False):
     media_item["approved"] = xml_get_tag_value(node, "approved")
     media_item["archived"] = xml_get_tag_value(node, "archived")
 
+    # seconds this item overlaps the next one (observer has already moved the next item's offset earlier)
+    try:
+        media_item["crossfade"] = float(xml_get_tag_value(node, "crossfade", 0) or 0)
+    except ValueError:
+        media_item["crossfade"] = 0.0
+
     if voicetrack:
         voicetrack = xml_get_direct_children(node, "voicetrack")[0]
         media_item["voicetrack_offset"] = xml_get_tag_value(voicetrack, "offset")

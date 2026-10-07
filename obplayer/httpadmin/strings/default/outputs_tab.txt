@@ -7,6 +7,13 @@ Outputs Tab
   fade_duration: Fade Out Duration (seconds)
   fade_duration_tooltip: End-of-show fade duration, if needed to prevent abrupt cut-off. 0 to disable.
 
+  Crossfade Settings: Crossfade Settings
+  crossfade_enable: Enable Crossfades
+  crossfade_enable_tooltip: Play the crossfades set on playlist items in OBServer. When off, every track plays to its end.
+  crossfade_id_max_length: Station ID Max Length (seconds)
+  crossfade_id_max_length_tooltip: An item shorter than this, with no crossfade, following a crossfaded track, is treated as a station ID and never faded.
+  crossfade_id_max_length_invalid: The station ID max length must be a number of seconds, 0 or more.
+
   Audio Output Settings: Audio Output Settings
 
   audio_out_mode: Audio Output Mode

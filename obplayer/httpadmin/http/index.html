@@ -1380,6 +1380,21 @@
             </tbody>
           </table>
 
+          <h4 data-t>Crossfade Settings</h4>
+
+          <table class="settings">
+            <tbody>
+              <tr>
+                <td title="crossfade_enable_tooltip" data-t>crossfade_enable</td>
+                <td><input type="checkbox" name="crossfade_enable" value="1"<%= obplayer.HTTPAdmin.form_item_checked('crossfade_enable') %>></td>
+              </tr>
+              <tr>
+                <td title="crossfade_id_max_length_tooltip" data-t>crossfade_id_max_length</td>
+                <td><input type="text" name="crossfade_id_max_length" value="<%= obplayer.Config.setting('crossfade_id_max_length', True) %>"></td>
+              </tr>
+            </tbody>
+          </table>
+
           <h4 data-t>Audio Output Settings</h4>
 
           <table class="settings">

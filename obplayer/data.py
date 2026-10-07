@@ -502,6 +502,13 @@ class ObConfigData(ObData):
             except ValueError:
                 return "fade_duration_not_numeric"
 
+        if setting_name == "crossfade_id_max_length":
+            try:
+                if float(setting_value) < 0:
+                    return "crossfade_id_max_length_invalid"
+            except ValueError:
+                return "crossfade_id_max_length_invalid"
+
         return None
 
     """
@@ -518,6 +525,8 @@ class ObConfigData(ObData):
             "audio/x-raw,channels=2,rate=44100,format=S16LE,layout=interleaved",
         )
         self.add_setting("fade_duration", "5.0", "float")
+        self.add_setting("crossfade_enable", "1", "bool")
+        self.add_setting("crossfade_id_max_length", "60", "float")
         self.add_setting("audio_out_mode", "auto", "text")
         self.add_setting("audio_out_alsa_device", "default", "text")
         self.add_setting("audio_out_jack_name", "", "text")
