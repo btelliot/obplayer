@@ -27,6 +27,7 @@ import sys
 import time
 import magic
 import random
+import threading
 import traceback
 
 import gi
@@ -68,6 +69,10 @@ class ObFallbackPlayer(obplayer.player.ObPlayerController):
         self.play_index = 0
         self.image_duration = 15.0
 
+        # guards play_index and the media order between the player thread (do_player_request)
+        # and live assist's fallback controls (next/prev/play)
+        self.lock = threading.Lock()
+
         # wall-clock time a queued request last ended *naturally* (set via onend, which
         # does not fire on preemption); used to tell a fresh re-engagement (a real gap
         # after a show) apart from continuing the fallback rotation.
@@ -105,17 +110,29 @@ class ObFallbackPlayer(obplayer.player.ObPlayerController):
 
                         if media_type:
                             # we discovered some more fallback media, add to our media list.
+                            (artist, title) = self.track_names(mediainfo, filename)
                             self.media.append(
                                 [
                                     uri,
                                     filename,
                                     media_type,
                                     float(mediainfo.get_duration()) / Gst.SECOND,
+                                    artist,
+                                    title,
                                 ]
                             )
 
                     if filetype in self.image_types:
-                        self.media.append([uri, filename, "image", self.image_duration])
+                        self.media.append(
+                            [
+                                uri,
+                                filename,
+                                "image",
+                                self.image_duration,
+                                "",
+                                os.path.splitext(filename)[0],
+                            ]
+                        )
                 except:
                     obplayer.Log.log(
                         "exception while loading fallback media: "
@@ -141,45 +158,133 @@ class ObFallbackPlayer(obplayer.player.ObPlayerController):
     def mark_request_end(self):
         self.last_request_end = time.time()
 
+    # artist and title from the file's tags, else from an "Artist - Title.mp3" filename
+    def track_names(self, mediainfo, filename):
+        artist = title = None
+        tags = mediainfo.get_tags()
+        if tags is not None:
+            (found, value) = tags.get_string(Gst.TAG_ARTIST)
+            if found:
+                artist = value
+            (found, value) = tags.get_string(Gst.TAG_TITLE)
+            if found:
+                title = value
+
+        if not title:
+            name = os.path.splitext(filename)[0]
+            if " - " in name:
+                (name_artist, title) = name.split(" - ", 1)
+                artist = artist or name_artist
+            else:
+                title = name
+
+        return (unicode(artist or ""), unicode(title))
+
     # the player is asking us what to play next
     def do_player_request(self, ctrl, present_time, media_class):
+        with self.lock:
+            if len(self.media) == 0:
+                return False
 
-        if len(self.media) == 0:
-            return False
+            # If we're re-engaging after a gap (a show just ended, or a higher-priority
+            # source dropped out) rather than continuing the rotation, hold silence for a
+            # moment first so the next show or an override can take over without a fallback
+            # blip. Mid-rotation track changes have present_time ~= last_request_end, so
+            # they skip this and play back-to-back.
+            if present_time - self.last_request_end > 0.5:
+                # use the longer hold on the very first engagement (player boot).
+                delay = self.engage_delay if self.booted else self.boot_engage_delay
+                self.booted = True
+                ctrl.add_request(
+                    media_type="break",
+                    duration=delay,
+                    title="fallback engage delay",
+                    onend=self.mark_request_end,
+                )
+                return True
 
-        # If we're re-engaging after a gap (a show just ended, or a higher-priority
-        # source dropped out) rather than continuing the rotation, hold silence for a
-        # moment first so the next show or an override can take over without a fallback
-        # blip. Mid-rotation track changes have present_time ~= last_request_end, so
-        # they skip this and play back-to-back.
-        if present_time - self.last_request_end > 0.5:
-            # use the longer hold on the very first engagement (player boot).
-            delay = self.engage_delay if self.booted else self.boot_engage_delay
-            self.booted = True
-            ctrl.add_request(
-                media_type="break",
-                duration=delay,
-                title="fallback engage delay",
-                onend=self.mark_request_end,
-            )
+            self.queue_track(ctrl)
             return True
 
+    # queue the track at play_index and move past it. Reshuffles once the whole rotation has played.
+    def queue_track(self, ctrl, start_time=None):
         if self.play_index >= len(self.media):
             self.play_index = 0
             random.shuffle(
                 self.media
             )  # shuffle again to create a new order for next time.
 
+        media = self.media[self.play_index]
         ctrl.add_request(
-            media_type=unicode(self.media[self.play_index][2]),
-            uri=unicode(self.media[self.play_index][0]),
-            duration=self.media[self.play_index][3],
+            media_type=unicode(media[2]),
+            start_time=start_time,
+            uri=unicode(media[0]),
+            duration=media[3],
             order_num=self.play_index,
-            artist="unknown",
-            title=unicode(self.media[self.play_index][1]),
+            artist=media[4],
+            title=media[5],
             onend=self.mark_request_end,
         )
 
         self.play_index = self.play_index + 1
 
+    #
+    # Live assist controls: jump around the rotation while the fallback is on air
+    #
+
+    # is the fallback what's on air (rather than a show or an override)?
+    def on_air(self):
+        return len(self.ctrl.player.get_controller_requests(self.ctrl)) > 0
+
+    # rotation position of the track on air, or -1
+    def current_index(self):
+        if not self.on_air():
+            return -1
+        return self.play_index - 1
+
+    def get_queue(self):
+        with self.lock:
+            items = [
+                {
+                    "artist": media[4],
+                    "title": media[5],
+                    "duration": media[3],
+                    "media_type": media[2],
+                }
+                for media in self.media
+            ]
+        return {"current": self.current_index(), "items": items}
+
+    def play(self, index):
+        if not 0 <= index < len(self.media):
+            return False
+        return self.skip_to(index)
+
+    def next(self):
+        return self.skip_to(self.play_index)
+
+    def previous(self):
+        return self.skip_to(max(0, self.play_index - 2))
+
+    # cut what the fallback has on air (with the short pause fade) and play the track at index
+    # (len(self.media) starts a fresh shuffle)
+    def skip_to(self, index):
+        with self.lock:
+            if len(self.media) == 0 or not self.on_air():
+                return False
+
+            # queue the new track to start now, before the fade frees the output, so the player
+            # picks it up straight away rather than asking us for a track (and adding the engage
+            # delay, as it would after a gap)
+            self.ctrl.clear_queue()
+            self.play_index = index
+            self.queue_track(self.ctrl, start_time=time.time())
+
+            fade = float(obplayer.Config.setting("pause_fade"))
+            if fade > 0:
+                obplayer.Player.fade_out_controller_requests(self.ctrl, fade)
+            else:
+                for output in obplayer.Player.get_controller_requests(self.ctrl):
+                    obplayer.Player.stop_request(output)
+            obplayer.Player.request_update.set()
         return True

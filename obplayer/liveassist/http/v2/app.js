@@ -18,7 +18,10 @@
     peakAt: 0,
     userScrollAt: 0,      // client ms the operator last scrolled/touched the playlist
     factsPick: -1,        // playlist row picked for Song facts (-1 = follow what's on air)
-    factsKey: ''          // what the facts pane is currently showing
+    factsKey: '',         // what the facts pane is currently showing
+    fallback: [],         // the fallback rotation (/info/fallback_queue), shown while it's on air
+    fallbackFor: null,    // rotation position the fallback list was last loaded for
+    listMode: 'show'      // what the playlist panel is showing: 'show' or 'fallback'
   };
 
   // TheAudioDB API key. '123' is the public free key (no biographies or descriptions);
@@ -108,7 +111,7 @@
       state.showEnd = parseFloat(res[1].value) || 0;
       state.playlist = Array.isArray(res[2]) ? res[2] : [];
       state.groups = Array.isArray(res[3]) ? res[3] : [];
-      $('show-name').textContent = state.showName || '(no show)';
+      renderShowName();
       $('show-end').textContent = state.showEnd ? clock(state.showEnd) : '--:--';
       renderPlaylist();
       renderGroups();
@@ -134,9 +137,43 @@
       state.statusAt = Date.now() / 1000;
       if (s.mode === 'playlist' && s.track >= 0) state.lastTrack = s.track;
       renderStatus();
+      syncListMode();
       renderPlaylistState();
       renderFacts();
     });
+  }
+
+  // The fallback rotation reshuffles when it wraps around, so it's reloaded whenever the
+  // fallback moves to another track.
+  function loadFallback() {
+    state.fallbackFor = state.status ? state.status.track : null;
+    return post('/info/fallback_queue').then(function (q) {
+      state.fallback = q && Array.isArray(q.items) ? q.items : [];
+      if (state.listMode === 'fallback') renderPlaylist();
+    });
+  }
+
+  // The player names a missing show "(no show playing)"; say what's on air instead.
+  function renderShowName() {
+    $('show-name').textContent = fallbackOn() ? 'No show found – playing fallback media'
+      : state.showName || '(no show)';
+  }
+
+  // While the fallback is on air the playlist panel shows its rotation instead of the show's.
+  function syncListMode() {
+    renderShowName();
+    var mode = fallbackOn() ? 'fallback' : 'show';
+    if (mode === 'fallback' && state.status.track !== state.fallbackFor) loadFallback().catch(noop);
+    if (mode !== state.listMode) renderPlaylist();
+  }
+
+  function fallbackOn() {
+    return !!state.status && state.status.source === 'fallback';
+  }
+
+  // the rows the playlist panel shows
+  function listRows() {
+    return state.listMode === 'fallback' ? state.fallback : state.playlist;
   }
 
   function loadLevels() {
@@ -161,7 +198,8 @@
   // Playlist row to highlight: the breakpoint itself while in a break.
   function currentTrack() {
     var s = state.status;
-    if (!s || s.mode !== 'playlist') return -1;
+    if (s && s.mode === 'fallback') return state.listMode === 'fallback' ? s.track : -1;
+    if (!s || s.mode !== 'playlist' || state.listMode !== 'show') return -1;
     return inBreak() ? s.track - 1 : s.track;
   }
 
@@ -196,15 +234,19 @@
     var s = state.status;
     if (!s) return;
     var playing = s.status === 'playing' || s.status === 'override';
-    var brk = inBreak();
+    var brk = inBreak(), fallback = fallbackOn();
     if (brk) setPill('break', 'Break');
+    else if (fallback) setPill('fallback', 'Fallback');
     else setPill(s.status === 'override' ? 'override' : (playing ? 'playing' : 'paused'),
                  s.status === 'override' ? 'Override' : (playing ? 'Playing' : 'Paused'));
     $('btn-play').innerHTML = playing ? '&#10073;&#10073;' : '&#9654;';
-    $('btn-play').title = playing ? 'Pause' : 'Play';
+    // The fallback can't be paused: that would be dead air with nothing to bring it back.
+    $('btn-play').disabled = fallback;
+    $('btn-play').title = fallback ? "The fallback can't be paused" : (playing ? 'Pause' : 'Play');
 
     // Skipping only works on live assist shows: scheduled (standard/advanced) shows are
     // clock-locked and the player snaps back to the schedule, restarting or cutting tracks.
+    // The fallback rotation can always skip.
     var canSkip = canSkipTracks();
     ['btn-prev', 'btn-next'].forEach(function (id) {
       $(id).disabled = !canSkip;
@@ -223,6 +265,8 @@
       if (state.playlist[s.track]) { title = state.playlist[s.track].title; artist = state.playlist[s.track].artist; }
     } else if (s.mode === 'group') {
       mode = 'Cart';
+    } else if (fallback) {
+      mode = s.track >= 0 && state.fallback.length ? 'Track ' + (s.track + 1) + ' of ' + state.fallback.length : '';
     }
     $('mode').textContent = mode;
     $('now-title').textContent = title || ' ';
@@ -232,7 +276,7 @@
   // Players with the stop-after command report stop_after in play_status. Older players
   // don't, and the button falls back to jumping to the next breakpoint row.
   function canSkipTracks() {
-    return !!state.status && state.status.show_type === 'live_assist';
+    return !!state.status && (state.status.show_type === 'live_assist' || fallbackOn());
   }
 
   function stopAfterSupported() {
@@ -242,6 +286,8 @@
   function renderBreakButton() {
     var b = $('btn-break');
     if (b.classList.contains('confirm')) return;
+    // no show, so no breaks
+    if (state.listMode === 'fallback') { b.hidden = true; return; }
 
     if (stopAfterSupported()) {
       var s = state.status, armed = !!s.stop_after;
@@ -305,8 +351,10 @@
     go.className = 'go';
     go.type = 'button';
     go.textContent = 'Play';
+    var fallback = state.listMode === 'fallback';
     armConfirm(go, 'Play', function () {
-      return post('/command/playlist_seek', { track_num: i, position: 0 });
+      return fallback ? post('/command/fallback_play', { index: i })
+        : post('/command/playlist_seek', { track_num: i, position: 0 });
     });
 
     li.appendChild(num);
@@ -322,11 +370,16 @@
   }
 
   function renderPlaylist() {
+    var mode = fallbackOn() ? 'fallback' : 'show';
+    if (mode !== state.listMode) state.factsPick = -1; // a picked row means nothing in the other list
+    state.listMode = mode;
+    var list = listRows();
     var ol = $('playlist');
     ol.textContent = '';
-    state.playlist.forEach(function (track, i) { ol.appendChild(trackRow(track, i)); });
-    var total = state.playlist.reduce(function (n, t) { return n + (parseFloat(t.duration) || 0); }, 0);
-    $('list-summary').textContent = state.playlist.length + ' tracks · ' + dur(total);
+    list.forEach(function (track, i) { ol.appendChild(trackRow(track, i)); });
+    var total = list.reduce(function (n, t) { return n + (parseFloat(t.duration) || 0); }, 0);
+    $('list-title').textContent = mode === 'fallback' ? 'Fallback' : 'Playlist';
+    $('list-summary').textContent = list.length + ' tracks · ' + dur(total);
     renderPlaylistState();
   }
 
@@ -340,10 +393,11 @@
     // A picked row that comes on air is just "now playing" again.
     if (state.factsPick >= 0 && state.factsPick === cur) state.factsPick = -1;
     // Held after a track (stop-after) rather than on a breakpoint row: that track is done.
-    var heldAfter = inBreak() && cur >= 0 && (state.playlist[cur] || {}).media_type !== 'breakpoint';
+    var list = listRows();
+    var heldAfter = inBreak() && cur >= 0 && (list[cur] || {}).media_type !== 'breakpoint';
 
     for (var i = 0; i < rows.length; i++) {
-      var row = rows[i], track = state.playlist[i] || {}, when = row.querySelector('.when');
+      var row = rows[i], track = list[i] || {}, when = row.querySelector('.when');
       row.classList.toggle('played', cur >= 0 && (i < cur || (heldAfter && i === cur)));
       row.classList.toggle('current', i === cur && !heldAfter);
       row.classList.toggle('picked', i === state.factsPick);
@@ -621,7 +675,7 @@
   function autoScroll() {
     var list = $('playlist');
     var cur = currentTrack();
-    if (cur < 0) cur = state.lastTrack;
+    if (cur < 0 && state.listMode === 'show') cur = state.lastTrack;
     if (cur < 0 || Date.now() - state.userScrollAt < 15000 || list.querySelector('.confirm')) return;
     var row = list.children[Math.max(0, cur - 2)];
     if (!row) return;
@@ -682,8 +736,8 @@
   // What the facts pane should describe: the picked row, else what's on air
   // (or, during a break, the track that starts when it ends).
   function factsTarget() {
-    var p = state.factsPick >= 0 && state.playlist[state.factsPick];
-    if (p) return { artist: p.artist, title: p.title, media: p.media_type, label: 'Playlist row ' + (state.factsPick + 1), picked: true };
+    var p = state.factsPick >= 0 && listRows()[state.factsPick];
+    if (p) return { artist: p.artist, title: p.title, media: p.media_type, label: (state.listMode === 'fallback' ? 'Fallback row ' : 'Playlist row ') + (state.factsPick + 1), picked: true };
     var s = state.status;
     if (!s) return null;
     if (inBreak()) {
@@ -904,12 +958,17 @@
 
   $('btn-play').addEventListener('click', function () {
     var s = state.status;
+    if (fallbackOn()) return;
     var playing = s && (s.status === 'playing' || s.status === 'override');
     command(playing ? '/command/pause' : '/command/play');
   });
   // canSkipTracks() is checked again here so a click can't slip through between status polls.
-  $('btn-next').addEventListener('click', function () { if (canSkipTracks()) command('/command/next'); });
-  $('btn-prev').addEventListener('click', function () { if (canSkipTracks()) command('/command/prev'); });
+  $('btn-next').addEventListener('click', function () {
+    if (canSkipTracks()) command(fallbackOn() ? '/command/fallback_next' : '/command/next');
+  });
+  $('btn-prev').addEventListener('click', function () {
+    if (canSkipTracks()) command(fallbackOn() ? '/command/fallback_prev' : '/command/prev');
+  });
   // Stop after this track: one click arms, another cancels. Every screen sees the state via
   // play_status, and nothing changes on air until the track ends, so there's no confirm step.
   $('btn-break').addEventListener('click', function () {

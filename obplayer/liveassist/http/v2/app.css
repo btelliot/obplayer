@@ -8,6 +8,8 @@
   --accent: #3ea6ff;
   --play: #2fbf71;
   --pause: #e0a526;
+  --fallback: #a98bf5;
+  --fallback-ink: #1a0f33;
   --danger: #ef5350;
   --played: #5d6773;
   --meter-green: #2fbf71;
@@ -25,6 +27,8 @@
   --text: #141a21;
   --muted: #5f6b79;
   --accent: #0b6fd6;
+  --fallback: #6d3fd9;
+  --fallback-ink: #fff;
   --played: #9aa4b0;
   color-scheme: light;
 }
@@ -241,6 +245,8 @@ a { color: var(--accent); }
 .pill[data-status="paused"] { background: var(--pause); color: #1b1300; }
 .pill[data-status="break"] { background: var(--accent); color: #fff; }
 .pill[data-status="offline"] { background: var(--danger); color: #fff; }
+/* on air from the fallback rotation: no show is scheduled */
+.pill[data-status="fallback"] { background: var(--fallback); color: var(--fallback-ink); }
 .now-line { display: flex; align-items: baseline; gap: 12px; min-width: 0; white-space: nowrap; }
 .now-title { font-size: 26px; font-weight: 700; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
 .now-artist { font-size: 20px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; flex: 0 1000 auto; min-width: 0; }

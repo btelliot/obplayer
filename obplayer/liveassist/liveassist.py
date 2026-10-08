@@ -105,6 +105,9 @@ class ObLiveAssist(httpserver.ObHTTPServer):
             groups = obplayer.Scheduler.get_current_groups()
             return groups
 
+        elif request.path == "/info/fallback_queue":
+            return obplayer.Scheduler.get_fallback_queue()
+
         elif request.path == "/command/play":
             if obplayer.Scheduler.unpause_show() == True:
                 return {"status": True}
@@ -124,6 +127,20 @@ class ObLiveAssist(httpserver.ObHTTPServer):
             if obplayer.Scheduler.previous_track() == True:
                 return {"status": True}
             return {"status": False}
+
+        # fallback rotation controls: only act while the fallback is on air
+        elif request.path == "/command/fallback_next":
+            return {"status": obplayer.Scheduler.fallback_next()}
+
+        elif request.path == "/command/fallback_prev":
+            return {"status": obplayer.Scheduler.fallback_previous()}
+
+        elif request.path == "/command/fallback_play":
+            try:
+                index = int(request.args["index"][0])
+            except (KeyError, ValueError):
+                return {"status": False, "error": "invalid request, missing index."}
+            return {"status": obplayer.Scheduler.fallback_play(index)}
 
         elif request.path == "/command/play_group_item":
             try:

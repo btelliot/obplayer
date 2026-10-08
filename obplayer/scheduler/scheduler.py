@@ -1256,7 +1256,38 @@ class ObScheduler:
             data["show_type"] = self.present_show.show_data["type"]
             data["stop_after"] = self.present_show.stop_after
 
+        # the fallback rotation is on air: status stays "override" for the classic UI, and the
+        # track is its position in the rotation (/info/fallback_queue)
+        fallback = self.get_fallback_player()
+        if fallback is not None and request["controller"] == fallback.ctrl:
+            data["source"] = "fallback"
+            data["mode"] = "fallback"
+            data["track"] = fallback.current_index()
+
         return data
+
+    # the fallback player, or None when it's disabled
+    def get_fallback_player(self):
+        module = getattr(obplayer, "fallback", None)
+        return getattr(module, "FallbackPlayer", None)
+
+    def get_fallback_queue(self):
+        fallback = self.get_fallback_player()
+        if fallback is None:
+            return {"current": -1, "items": []}
+        return fallback.get_queue()
+
+    def fallback_play(self, index):
+        fallback = self.get_fallback_player()
+        return fallback is not None and fallback.play(index)
+
+    def fallback_next(self):
+        fallback = self.get_fallback_player()
+        return fallback is not None and fallback.next()
+
+    def fallback_previous(self):
+        fallback = self.get_fallback_player()
+        return fallback is not None and fallback.previous()
 
     def get_audio_levels(self):
         return self.ctrl.player.get_audio_levels()
