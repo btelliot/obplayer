@@ -135,17 +135,18 @@ class ObPlaylist(object):
     # with the next item; observer has already moved the next item's offset earlier by that amount).
     #
     # Sets on each item:
-    #   fade_in   seconds to ramp up from silence at the start
+    #   fade_in   seconds to ramp up from silence at the start (always 0 here: the item after a
+    #             crossfade starts at full volume while the outgoing one fades out under it)
     #   fade_out  seconds before the end to start fading out
     #   overlap   seconds before the end that the next item starts
     #
     # Station IDs are never faded. Observer doesn't mark them, so an item counts as one when it has no
     # crossfade of its own, follows a crossfaded track, and is shorter than crossfade_id_max_length.
-    #   track -> track (X):  fade out X, next starts X before the end, fades in over X
+    #   track -> track (X):  fade out X, next starts at full volume X before the end
     #   track -> ID (X):     fade out X, ID starts at full volume X/3 before the end (2/3 into the fade)
-    #   ID -> track:         ID plays at full volume, next track fades in under its last 2X/3
-    # Offsets are adjusted to match, which moves each ID 2X/3 later; the track after it lands back
-    # on observer's offset.
+    #   ID -> track:         no crossfade of its own, so the next track starts when the ID ends
+    # Offsets are adjusted to match, which moves each ID (and everything after it) 2X/3 later than
+    # observer's offset.
     #
     def plan_transitions(self):
         enabled = obplayer.Config.setting("crossfade_enable")
@@ -185,33 +186,13 @@ class ObPlaylist(object):
                 if crossfade <= 0:
                     continue
 
+                item["fade_out"] = crossfade
                 if not following["is_station_id"]:
-                    item["fade_out"] = crossfade
                     item["overlap"] = crossfade
-                    following["fade_in"] = crossfade
                     continue
 
-                # track -> station ID
-                item["fade_out"] = crossfade
+                # track -> station ID: start the ID late in the fade so it isn't buried
                 item["overlap"] = crossfade / 3
-
-                # station ID -> track: fade the track in under the ID's end, but never start it
-                # before the track ahead of the ID has finished. Not into another short item with
-                # no crossfade (likely a second ID).
-                after = items[index + 2] if index + 2 < len(items) else None
-                if (
-                    after
-                    and is_audio(after)
-                    and not (after["crossfade"] <= 0 and after["duration"] < id_max_length)
-                ):
-                    overlap = min(
-                        crossfade * 2 / 3,
-                        following["duration"] - crossfade / 3,
-                        after["duration"],
-                    )
-                    if overlap > 0:
-                        following["overlap"] = overlap
-                        after["fade_in"] = overlap
 
         # observer subtracted each item's crossfade from the next item's offset; apply our own overlap instead
         shift = 0.0
