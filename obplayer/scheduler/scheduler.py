@@ -927,7 +927,8 @@ class ObLiveAssistShow(ObShow):
             uri = obplayer.Sync.media_uri(media["file_location"], media["filename"])
             if not uri:
                 return False
-            obplayer.Player.carts.play(uri, media["title"])
+            if not obplayer.Player.carts.play(uri, media["title"]):
+                return True  # double click: the cart is already playing
             obplayer.PlaylogData.add_entry(
                 media["media_id"],
                 media["artist"],

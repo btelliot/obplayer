@@ -24,6 +24,7 @@ import obplayer
 
 import os
 import threading
+import time
 import traceback
 
 import gi
@@ -107,9 +108,22 @@ class ObCartPlayer(object):
         self.pipeline = None
         self.handlers = []
         self.count = 0
+        self.last_uri = None
+        self.last_fired = 0
 
+    # how soon the same cart can be fired again; anything quicker is a double click, not a restart
+    double_fire_window = 0.6
+
+    # returns False when the request was ignored as a double fire
     def play(self, uri, title=""):
         with self.lock:
+            now = time.time()
+            if uri == self.last_uri and now - self.last_fired < self.double_fire_window:
+                obplayer.Log.log("cart: ignoring double fire of " + title, "debug")
+                return False
+            self.last_uri = uri
+            self.last_fired = now
+
             self.stop_pipeline()
             # a fresh interpipe name per cart: an ended cart's sink can linger under the old
             # name, and the mixer input would attach to it instead of the new cart
@@ -136,6 +150,7 @@ class ObCartPlayer(object):
             pipeline.set_state(Gst.State.PLAYING)
             self.pipeline = pipeline
             obplayer.Log.log("cart: playing " + title, "player")
+            return True
 
     def stop(self):
         with self.lock:

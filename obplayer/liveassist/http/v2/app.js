@@ -29,6 +29,9 @@
   var AUDIODB_KEY = '123';
   var AUDIODB = 'https://www.theaudiodb.com/api/v1/json/' + AUDIODB_KEY + '/';
 
+  // Clicks on the same cart closer together than this are a double click, not a restart.
+  var CART_REFIRE_MS = 600;
+
   var $ = function (id) { return document.getElementById(id); };
 
   // Phones (matches the 600px breakpoint in app.css): monitor + basic control only,
@@ -456,7 +459,11 @@
             var c = state.cartSweep;
             if (c && c.group === gi && c.item === ii) state.cartSweep = null;
           });
+          // a second click within CART_REFIRE_MS is a double click, not a restart (the player ignores it too)
+          var firedAt = 0;
           b.addEventListener('click', function () {
+            if (Date.now() - firedAt < CART_REFIRE_MS) return;
+            firedAt = Date.now();
             var sweep = state.cartSweep = { group: gi, item: ii, start: Date.now() / 1000, dur: length };
             document.querySelectorAll('.cart.sweeping').forEach(function (other) { other.classList.remove('sweeping'); });
             startSweep(b, length, 0);
