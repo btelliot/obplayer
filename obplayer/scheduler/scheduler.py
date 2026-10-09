@@ -477,6 +477,22 @@ class ObShow(object):
         self.media_start_time = present_time - offset
 
         if media["media_type"] == "breakpoint":
+            # live assist with no host confirmed: play straight through instead of holding dead air
+            if isinstance(self, ObLiveAssistShow) and not self.host_confirmed:
+                obplayer.Log.log(
+                    "skipping breakpoint at position "
+                    + str(self.playlist.pos)
+                    + ": no host confirmed",
+                    "scheduler",
+                )
+                self.breakpoints_skipped = True
+                self.playlist.increment()
+                if self.playlist.is_finished():
+                    self.run_out()
+                    return
+                self.play_current(present_time)
+                return
+
             obplayer.Log.log(
                 "stopping on breakpoint at position " + str(self.playlist.pos),
                 "scheduler",
@@ -763,6 +779,65 @@ class ObShow(object):
 
 
 class ObLiveAssistShow(ObShow):
+    # how long before a breakpoint the live assist UI asks "are you there?"
+    host_check_lead = 120
+
+    def __init__(self):
+        ObShow.__init__(self)
+        # breakpoints only stop the show once a host has confirmed they're there (any operator
+        # action counts); until then they're skipped so an unattended show doesn't go silent
+        self.host_confirmed = False
+        self.breakpoints_skipped = False
+        self.ran_out = False
+
+    def confirm_host(self):
+        if not self.host_confirmed:
+            obplayer.Log.log("host confirmed: breakpoints enabled", "scheduler")
+        self.host_confirmed = True
+
+    # seconds until the next breakpoint when the "are you there?" check is due, otherwise None.
+    # Due once the next breakpoint is host_check_lead seconds away (counting the items between),
+    # unless a host has confirmed or a breakpoint has already been skipped this show.
+    def host_check_due(self, present_time):
+        if self.host_confirmed or self.breakpoints_skipped or self.is_paused():
+            return None
+        if self.media_start_time == 0 or self.now_playing is None:
+            return None
+        if "group_id" in self.now_playing:
+            return None
+
+        # time until the next breakpoint, counting every item between here and there (the item
+        # before a breakpoint is often a short station ID)
+        current = self.now_playing
+        until = (
+            self.media_start_time
+            + float(current["duration"])
+            - current.get("overlap", 0)
+            - present_time
+        )
+        for item in self.playlist.playlist[self.playlist.pos + 1 :]:
+            if item["media_type"] == "breakpoint":
+                break
+            until += float(item["duration"]) - item.get("overlap", 0)
+            if until > self.host_check_lead:
+                return None
+        else:
+            return None  # no breakpoint ahead
+
+        if until > self.host_check_lead:
+            return None
+        return max(0.0, until)
+
+    # the playlist has run out: let the fallback player take over rather than holding silence
+    def run_out(self):
+        self.ctrl.stop_requests()
+        if not self.ran_out:
+            self.ran_out = True
+            obplayer.Log.log(
+                "live assist playlist finished: handing over to the fallback player",
+                "scheduler",
+            )
+
     def start_show(self, present_time):
         # Already changed in another branch. Should be here too.
         # self.ctrl.stop_requests()
@@ -772,6 +847,10 @@ class ObLiveAssistShow(ObShow):
         self.play_current(present_time)
 
     def play_next(self, present_time, media_class=None):
+        if self.playlist.is_finished() and not self.is_paused():
+            self.run_out()
+            return False
+
         if self.is_paused() or self.playlist.is_finished():
             # already holding a break (a breakpoint, "stop after this track", or pause): keep it.
             # The player can ask again in the same pass for its other outputs, and replacing the
@@ -816,10 +895,7 @@ class ObLiveAssistShow(ObShow):
         # increment before checking if finished (otherwise finished is never detected)
         self.playlist.increment()
         if self.playlist.is_finished():
-            self.ctrl.stop_requests()
-            self.ctrl.add_request(
-                media_type="break", end_time=self.end_time(), title="show paused break"
-            )
+            self.run_out()
             return False
 
         # TODO can you insert a break if the previous track failed to play?
@@ -1128,6 +1204,7 @@ class ObScheduler:
             return False
 
         with self.lock:
+            self.confirm_host()
             self.present_show.playlist_seek(track_num, seek)
         return True
 
@@ -1136,6 +1213,7 @@ class ObScheduler:
             return False
 
         with self.lock:
+            self.confirm_host()
             self.present_show.play_group_item(group_num, group_item_num, seek)
         return True
 
@@ -1144,16 +1222,26 @@ class ObScheduler:
             return False
 
         with self.lock:
+            self.confirm_host()
             self.present_show.stop_after = bool(enable)
             # the playing track may already have its crossfade set up
             obplayer.Player.set_controller_transition(self.ctrl, not enable)
         return True
+
+    # a host is in the studio: let live assist breakpoints stop the show (the live assist UI's
+    # "are you there?" prompt, and any other operator action)
+    def confirm_host(self):
+        if isinstance(self.present_show, ObLiveAssistShow):
+            self.present_show.confirm_host()
+            return True
+        return False
 
     def unpause_show(self):
         if self.present_show == None:
             return False
 
         with self.lock:
+            self.confirm_host()
             self.present_show.unpause()
         return True
 
@@ -1162,6 +1250,8 @@ class ObScheduler:
             return False
 
         with self.lock:
+            if not syncing:
+                self.confirm_host()
             self.present_show.pause(syncing)
         return True
 
@@ -1170,6 +1260,7 @@ class ObScheduler:
             return False
 
         with self.lock:
+            self.confirm_host()
             self.present_show.next()
         return True
 
@@ -1178,6 +1269,7 @@ class ObScheduler:
             return False
 
         with self.lock:
+            self.confirm_host()
             self.present_show.previous()
         return True
 
@@ -1255,6 +1347,17 @@ class ObScheduler:
         if self.present_show != None:
             data["show_type"] = self.present_show.show_data["type"]
             data["stop_after"] = self.present_show.stop_after
+
+        # live assist breakpoint host check: host_check is the seconds until the next breakpoint
+        # while the UI should ask "are you there?" (null otherwise)
+        if isinstance(self.present_show, ObLiveAssistShow):
+            data["host_confirmed"] = self.present_show.host_confirmed
+            data["breakpoints_skipped"] = self.present_show.breakpoints_skipped
+            data["host_check"] = (
+                self.present_show.host_check_due(time.time())
+                if request["controller"] == self.ctrl
+                else None
+            )
 
         # the fallback rotation is on air: status stays "override" for the classic UI, and the
         # track is its position in the rotation (/info/fallback_queue)

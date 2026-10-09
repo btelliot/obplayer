@@ -173,6 +173,10 @@ class ObLiveAssist(httpserver.ObHTTPServer):
             else:
                 return {"status": False}
 
+        # "are you there?": a host is in the studio, so live assist breakpoints stop the show
+        elif request.path == "/command/host_confirm":
+            return {"status": obplayer.Scheduler.confirm_host()}
+
         elif request.path == "/command/stop_after_current":
             # enable=1 arms "stop after this track", enable=0 cancels it (live assist shows only)
             enable = request.args.get("enable", ["1"])[0] != "0"

@@ -553,8 +553,39 @@
 
     autoScroll();
     renderRunout();
+    renderHostCheck();
     syncSeek();
   }
+
+  // ---- "are you there?" -------------------------------------------------
+  // Live assist breakpoints only stop the show once a host confirms (any button counts on the
+  // player). The player says when to ask: host_check is the seconds to the next breakpoint
+  // during the track before it. Unconfirmed, the breakpoint is skipped, and so is every later
+  // one this show; the banner lets a host who turns up late turn them back on.
+  function renderHostCheck() {
+    var s = state.status;
+    var live = !!s && s.show_type === 'live_assist';
+    var due = live && s.host_check !== null && s.host_check !== undefined;
+    $('host-check').hidden = !due;
+    if (due) {
+      var left = s.host_check - (Date.now() / 1000 - state.statusAt);
+      $('host-check-left').textContent = dur(Math.max(0, left));
+    }
+    $('host-skipped').hidden = !(live && s.breakpoints_skipped && !s.host_confirmed);
+  }
+
+  function confirmHost() {
+    if (state.status) {
+      state.status.host_check = null; // hide straight away; the next poll confirms
+      state.status.host_confirmed = true;
+    }
+    renderHostCheck();
+    post('/command/host_confirm')
+      .then(function () { setTimeout(function () { loadStatus().catch(noop); }, 300); })
+      .catch(function () { loadStatus().catch(noop); });
+  }
+  $('host-check-ok').addEventListener('click', confirmHost);
+  $('host-skipped-ok').addEventListener('click', confirmHost);
 
   // ---- seeking -----------------------------------------------------------
   // Drag/click the progress bar to pick a point; nothing happens on air until Confirm.

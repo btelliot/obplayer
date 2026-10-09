@@ -41,6 +41,10 @@
 </div>
 
 <div id="runout" class="runout" role="status" hidden></div>
+<div id="host-skipped" class="hostnote" role="status" hidden>
+  <span>Breakpoints are being skipped &mdash; nobody confirmed they&rsquo;re in the studio.</span>
+  <button id="host-skipped-ok" type="button" class="hostnote-ok">I&rsquo;m here</button>
+</div>
 
 <nav class="mtabs" role="tablist" aria-label="Panels">
   <button type="button" class="mtab" role="tab" data-mtab="playlist">Playlist</button>
@@ -112,6 +116,15 @@
     <span id="db" class="mono db">-&infin;</span>
   </div>
 </footer>
+
+<div id="host-check" class="hostcheck" role="alertdialog" aria-modal="true" aria-labelledby="host-check-title" hidden>
+  <div class="hostcheck-box">
+    <h2 id="host-check-title">Are you there?</h2>
+    <p>A breakpoint is coming up in <b id="host-check-left" class="mono">2:00</b>.</p>
+    <p class="muted">If nobody confirms, the show plays straight through its breakpoints for the rest of the show.</p>
+    <button id="host-check-ok" type="button" class="hostcheck-ok">I&rsquo;m here</button>
+  </div>
+</div>
 
 <script src="/v2/app.js"></script>
 </body>

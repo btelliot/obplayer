@@ -417,3 +417,34 @@ a { color: var(--accent); }
 }
 .runout[hidden] { display: none; }
 @media (max-width: 600px) { .runout { padding: 6px 14px; font-size: 14px; } }
+
+/* "Are you there?" before a live assist breakpoint, and the notice once breakpoints are skipped */
+.hostcheck {
+  position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.hostcheck[hidden] { display: none; }
+.hostcheck-box {
+  width: 100%; max-width: 440px; padding: 28px; text-align: center;
+  background: var(--panel); border: 2px solid var(--pause); border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .45);
+}
+.hostcheck-box h2 { margin: 0 0 12px; font-size: 30px; }
+.hostcheck-box p { margin: 0 0 10px; font-size: 18px; }
+.hostcheck-box b { color: var(--pause); }
+.hostcheck-ok {
+  margin-top: 12px; width: 100%; padding: 16px; border: 0; border-radius: var(--radius);
+  background: var(--play); color: #06210f; font: inherit; font-size: 22px; font-weight: 700; cursor: pointer;
+}
+.hostcheck-ok:hover { filter: brightness(1.08); }
+.hostnote {
+  flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 20px; font-size: 16px; font-weight: 600;
+  color: var(--text); background: color-mix(in srgb, var(--pause) 18%, var(--panel)); border-bottom: 2px solid var(--pause);
+}
+.hostnote[hidden] { display: none; }
+.hostnote-ok {
+  flex: none; margin-left: auto; border: 1px solid var(--pause); background: transparent; color: var(--text);
+  border-radius: 6px; padding: 6px 14px; font: inherit; font-weight: 700; cursor: pointer;
+}
+.hostnote-ok:hover { background: color-mix(in srgb, var(--pause) 20%, transparent); }
+@media (max-width: 600px) { .hostnote { padding: 6px 14px; font-size: 14px; } }
