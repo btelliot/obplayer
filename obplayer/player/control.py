@@ -291,6 +291,22 @@ class ObPlayer(object):
             else:
                 self.stop_request("audio")
 
+        # a show taking over from fallback music: fade the fallback track out under it (over the
+        # Fade Out Duration setting) instead of cutting it off; the show starts at full volume
+        elif (
+            req["media_type"] == "audio"
+            and current is not None
+            and current["media_type"] == "audio"
+            and current["controller"].name == "fallback"
+            and req["priority"] > current["priority"]
+        ):
+            try:
+                fade = float(obplayer.Config.setting("fade_duration"))
+            except (TypeError, ValueError):
+                fade = 0
+            if fade > 0:
+                self.fade_out_controller_requests(current["controller"], fade)
+
         stop_list = []
         if req["play_mode"] == "exclusive":
             stop_list = [output for output in output_limit if self.requests[output]]

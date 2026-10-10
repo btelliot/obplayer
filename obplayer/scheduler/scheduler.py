@@ -1057,11 +1057,13 @@ class ObScheduler:
         self.set_next_update()
 
     def set_next_update(self):
-        if (
-            self.present_show
-            and self.present_show.next_media_update < self.next_show_update
-        ):
-            self.ctrl.set_next_update(self.present_show.next_media_update)
+        # live assist shows don't schedule media updates (next_media_update stays 0, which the
+        # player reads as "no update"), so fall back to the next show change. Otherwise a show
+        # that has handed over to the fallback player (playlist ran out) would only change over
+        # when a fallback track happens to end.
+        media_update = self.present_show.next_media_update if self.present_show else 0
+        if media_update and media_update < self.next_show_update:
+            self.ctrl.set_next_update(media_update)
         else:
             self.ctrl.set_next_update(self.next_show_update)
 
