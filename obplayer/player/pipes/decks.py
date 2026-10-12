@@ -158,35 +158,59 @@ class ObAudioDeckPipeline(ObGstPipeline):
         self.register_signals()
 
     #
-    # output patching (same approach as ObBreakPipeline)
+    # output patching
     #
+    # The mix keeps running from the first patch on; patching only swaps what it feeds (the shared
+    # audio output bin, or the fakesink while another pipe has the output). Stopping and restarting
+    # the mix around every break raced with the deck starting right after it, and could leave that
+    # deck silent on air until the player restarted.
     def set_audio_sink(self, sink):
-        if self.audiosink:
-            self.mixconvert.unlink(self.audiosink)
-            self.pipeline.remove(self.audiosink)
-        self.audiosink = sink
-        self.pipeline.add(self.audiosink)
-        self.mixconvert.link(self.audiosink)
+        srcpad = self.mixconvert.get_static_pad("src")
+        running = self.pipeline.get_state(0)[1] == Gst.State.PLAYING
+        probe = None
+        if running:
+            # hold the mix's output while the sink is swapped; it pushes a buffer every few ms
+            blocked = threading.Event()
+
+            def on_blocked(pad, info):
+                blocked.set()
+                return Gst.PadProbeReturn.OK
+
+            probe = srcpad.add_probe(Gst.PadProbeType.BLOCK_DOWNSTREAM, on_blocked)
+            blocked.wait(0.5)
+        try:
+            if self.audiosink:
+                self.mixconvert.unlink(self.audiosink)
+                self.audiosink.set_state(Gst.State.NULL)
+                self.pipeline.remove(self.audiosink)
+            self.audiosink = sink
+            self.pipeline.add(sink)
+            self.mixconvert.link(sink)
+            if running:
+                sink.sync_state_with_parent()
+                self.pipeline.recalculate_latency()
+        finally:
+            if probe is not None:
+                srcpad.remove_probe(probe)
+
+    def keep_running(self):
+        if self.pipeline.get_state(0)[1] != Gst.State.PLAYING:
+            self.wait_state(Gst.State.PLAYING)
 
     def patch(self, mode):
         obplayer.Log.log(self.name + ": patching " + mode, "debug")
         with self.lock:
             if "audio" in mode.split("/") and "audio" not in self.mode:
-                self.wait_state(Gst.State.NULL)
                 self.set_audio_sink(self.player.outputs["audio"].get_bin())
             ObGstPipeline.patch(self, mode)
-            if "audio" in self.mode:
-                self.wait_state(Gst.State.PLAYING)
+            self.keep_running()
 
     def unpatch(self, mode):
         obplayer.Log.log(self.name + ": unpatching " + mode, "debug")
         with self.lock:
             if "audio" in mode.split("/") and "audio" in self.mode:
-                self.wait_state(Gst.State.NULL)
                 self.set_audio_sink(self.fakesink)
             ObGstPipeline.unpatch(self, mode)
-            if "audio" in self.mode:
-                self.wait_state(Gst.State.PLAYING)
 
     #
     # playback
@@ -237,8 +261,7 @@ class ObAudioDeckPipeline(ObGstPipeline):
 
     def start(self):
         with self.lock:
-            if "audio" in self.mode:
-                self.wait_state(Gst.State.PLAYING)
+            self.keep_running()
 
             index = self.cued
             if index is None:
@@ -325,8 +348,7 @@ class ObAudioDeckPipeline(ObGstPipeline):
 
     def start_output(self):
         with self.lock:
-            if "audio" in self.mode:
-                self.wait_state(Gst.State.PLAYING)
+            self.keep_running()
 
     #
     # crossfades
