@@ -1374,6 +1374,10 @@
           <table class="settings">
             <tbody>
               <tr>
+                <td title="show_fade_enable_tooltip" data-t>show_fade_enable</td>
+                <td><input type="checkbox" name="show_fade_enable" value="1"<%= obplayer.HTTPAdmin.form_item_checked('show_fade_enable') %>></td>
+              </tr>
+              <tr>
                 <td title="fade_duration_tooltip" data-t>fade_duration</td>
                 <td><input type="text" name="fade_duration" value="<%= obplayer.Config.setting('fade_duration', True) %>"></td>
               </tr>

@@ -4,6 +4,8 @@ Outputs Tab
   Outputs: Outputs
 
   Show Fade Settings: Show Fade Settings
+  show_fade_enable: Enable Show Fades
+  show_fade_enable_tooltip: Fade out any track the end of a show would cut off (standard, advanced and live assist shows), over the Fade Out Duration, whatever the playlist's Last Track Fade-Out setting.
   fade_duration: Fade Out Duration (seconds)
   fade_duration_tooltip: End-of-show fade duration, if needed to prevent abrupt cut-off. 0 to disable.
 

@@ -532,6 +532,7 @@ class ObConfigData(ObData):
             "audio/x-raw,channels=2,rate=44100,format=S16LE,layout=interleaved",
         )
         self.add_setting("fade_duration", "5.0", "float")
+        self.add_setting("show_fade_enable", "0", "bool")
         self.add_setting("crossfade_enable", "1", "bool")
         self.add_setting("crossfade_id_max_length", "60", "float")
         self.add_setting("pause_fade", "0.5", "float")

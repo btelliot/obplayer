@@ -498,6 +498,10 @@ class ObShow(object):
 
         else:
             fadeout_mode = self.show_data["last_track_fadeout"]
+            # "Enable Show Fades": fade any track the end of the show would cut, whatever the
+            # playlist says (the server always sends "never" for live assist shows)
+            if obplayer.Config.setting("show_fade_enable") and fadeout_mode != "always":
+                fadeout_mode = "auto"
             fadeout = False
 
             # fade out if media is the last track or media ends at/after the show end time
@@ -1034,9 +1038,10 @@ class ObScheduler:
 
     def do_showfade_update(self, ctrl, present_time):
         self.showfade_ctrl.set_next_update(present_time + 0.1)
+        # standard and advanced shows fade the mixer; live assist fades the track on its deck instead
         if (
             self.present_show
-            and type(self.present_show) is ObShow
+            and not isinstance(self.present_show, ObLiveAssistShow)
             and self.present_show.fadeout
         ):
             ending_in = self.present_show.end_time() - present_time
