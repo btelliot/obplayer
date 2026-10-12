@@ -695,6 +695,21 @@ class ObShow(object):
             self.paused = True
             # the position Pause was pressed at, so resuming replays the faded-out tail
             self.pause_position = now - self.media_start_time
+            # Pause in the first seconds of a live assist track usually means "I meant to break
+            # before this one" (it crossfaded in): rewind so Play starts it from the top instead
+            # of a couple of seconds in. Measured in the track, so a seek-bar jump isn't rewound.
+            if (
+                not syncing
+                and isinstance(self, ObLiveAssistShow)
+                and self.media_start_time > 0
+                and 0 < self.pause_position < self.early_pause_rewind
+            ):
+                obplayer.Log.log(
+                    "paused %.1fs into the track: Play will start it from the top"
+                    % self.pause_position,
+                    "scheduler",
+                )
+                self.pause_position = 0
             self.media_start_time = 0
             if fade > 0:
                 self.ctrl.clear_queue()
@@ -720,7 +735,12 @@ class ObShow(object):
             if self.now_playing is None:
                 self.play_current(time.time())
             else:
-                fade = self.resume_fade(self.now_playing, self.pause_position)
+                # from the top it starts at full volume, like any track after a break
+                fade = (
+                    self.resume_fade(self.now_playing, self.pause_position)
+                    if self.pause_position > 0
+                    else 0
+                )
                 self.play_media(
                     self.now_playing,
                     self.pause_position,
@@ -762,6 +782,8 @@ class ObShow(object):
 class ObLiveAssistShow(ObShow):
     # how long before a breakpoint the live assist UI asks "are you there?"
     host_check_lead = 120
+    # Pause this many seconds or less into a track rewinds it to the top (see ObShow.pause)
+    early_pause_rewind = 5
 
     def __init__(self):
         ObShow.__init__(self)

@@ -59,12 +59,13 @@ class HTTPNotFoundError(HTTPError):
 
 
 class Request(object):
-    def __init__(self, reqtype, path, args, access, headers):
+    def __init__(self, reqtype, path, args, access, headers, client=None):
         self.reqtype = reqtype
         self.path = path
         self.access = access
         self.args = args
         self.headers = headers
+        self.client = client
 
 
 class Response(object):
@@ -307,7 +308,14 @@ class ObHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         else:
             postvars = {}
 
-        request = Request("POST", self.path, postvars, self.admin_access, self.headers)
+        request = Request(
+            "POST",
+            self.path,
+            postvars,
+            self.admin_access,
+            self.headers,
+            client=self.client_address[0],
+        )
 
         try:
             response = self.server.handle_post(request)

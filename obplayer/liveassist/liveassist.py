@@ -62,7 +62,47 @@ class ObLiveAssist(httpserver.ObHTTPServer):
             conn.websocket_write_close(200, "Server Exiting")
         httpserver.ObHTTPServer.shutdown(self)
 
+    # Button presses go to the player log with what was on air when they arrived, so "I hit play
+    # and nothing happened" can be checked afterwards (e.g. Pause pressed where Break was meant).
     def handle_post(self, request):
+        if not request.path.startswith("/command/") or request.path == "/command/station_count":
+            return self.dispatch_post(request)
+
+        try:
+            on_air = self.describe_on_air()
+        except Exception as e:
+            on_air = "unknown (" + str(e) + ")"
+        response = self.dispatch_post(request)
+        result = response.get("status") if isinstance(response, dict) else response
+        args = " ".join(k + "=" + ",".join(v) for k, v in sorted(request.args.items()))
+        obplayer.Log.log(
+            "button "
+            + request.path[len("/command/"):]
+            + (" " + args if args else "")
+            + " from "
+            + str(request.client)
+            + " | on air: "
+            + on_air
+            + " | result: "
+            + str(result),
+            "liveassist",
+        )
+        return response
+
+    def describe_on_air(self):
+        s = obplayer.Scheduler.get_now_playing()
+        text = s.get("status", "?")
+        if s.get("title"):
+            text += " '" + (s.get("artist") + " - " if s.get("artist") else "") + s["title"] + "'"
+        if s.get("duration"):
+            text += " at %.1f/%.1fs" % (float(s.get("position", 0)), float(s["duration"]))
+        if s.get("track", -1) >= 0:
+            text += " track " + str(s["track"] + 1)
+        if s.get("stop_after"):
+            text += " (break armed)"
+        return text
+
+    def dispatch_post(self, request):
         # if not request.access:
         #    return { 'status' : False, 'error' : "You don't have permission to do that.  You are current logged in as a guest" }
 
